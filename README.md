@@ -164,7 +164,7 @@ git submodule update --init --recursive
 Nix/NixOS users can enter the development shell with either `nix develop` (flakes) or `nix-shell`:
 
 ```bash
-nix develop -f nix
+nix develop
 # or
 nix-shell nix
 ```
