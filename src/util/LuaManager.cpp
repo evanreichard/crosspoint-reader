@@ -1053,6 +1053,27 @@ void LuaManager::registerBindings() {
   lua_setglobal(state, "STYLE_BOLD");
 }
 
+// Strip Debug Info - Lua keeps per-instruction line tables, local names, and upvalue names for
+// every prototype, which for a ~18 KB script costs more RAM than the bytecode itself. Dumping
+// with strip and reloading discards them, at the cost of line numbers in runtime error messages.
+// Leaves the stack unchanged on any failure: the original chunk stays loaded.
+void LuaManager::stripChunkDebugInfo() {
+  std::string stripped;
+  const auto writer = [](lua_State*, const void* chunk, size_t size, void* out) {
+    static_cast<std::string*>(out)->append(static_cast<const char*>(chunk), size);
+    return 0;
+  };
+  if (lua_dump(state, writer, &stripped, 1) != 0 || stripped.empty()) return;
+
+  if (luaL_loadbuffer(state, stripped.data(), stripped.size(), "=app") != LUA_OK) {
+    LOG_ERR("LUA", "Stripped reload failed: %s", lua_tostring(state, -1));
+    lua_pop(state, 1);
+    return;
+  }
+  lua_remove(state, -2);  // drop the original chunk, keeping the stripped one
+  lua_gc(state, LUA_GCCOLLECT, 0);
+}
+
 bool LuaManager::runPlugin(const std::string& pluginName) {
   if (!state) return false;
   const std::string path = "/.apps/" + pluginName + "/main.lua";
@@ -1070,6 +1091,7 @@ bool LuaManager::runPlugin(const std::string& pluginName) {
   const std::string chunkName = "@" + pluginName;
   int result = lua_load(state, readLuaChunk, reader.get(), chunkName.c_str(), nullptr);
   reader->file.close();
+  if (result == LUA_OK) stripChunkDebugInfo();
   if (result == LUA_OK) result = lua_pcall(state, 0, 0, 0);
   if (result != LUA_OK) {
     setError(lua_tostring(state, -1));
