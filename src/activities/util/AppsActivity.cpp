@@ -78,7 +78,20 @@ void AppsActivity::launchSelected() {
     LOG_ERR("APPS", "OOM: LuaActivity");
     return;
   }
-  startActivityForResult(std::move(activity), [](const ActivityResult&) {});
+  // Rescan on Return - An app can install or remove other apps (the AppStore does), so the list
+  // built in onEnter() is stale by the time control comes back.
+  startActivityForResult(std::move(activity), [this](const ActivityResult&) {
+    const std::string previous = apps.empty() ? std::string() : apps[selectedIndex].name;
+    loadApps();
+    selectedIndex = 0;
+    for (size_t i = 0; i < apps.size(); ++i) {
+      if (apps[i].name == previous) {
+        selectedIndex = static_cast<int>(i);
+        break;
+      }
+    }
+    requestUpdate();
+  });
 }
 
 void AppsActivity::loop() {
