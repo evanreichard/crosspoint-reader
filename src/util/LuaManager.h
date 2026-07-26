@@ -38,5 +38,6 @@ class LuaManager {
   char lastError[192] = {};
 
   void registerBindings();
+  void stripChunkDebugInfo();
   void setError(const char* message);
 };
