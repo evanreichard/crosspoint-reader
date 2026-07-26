@@ -37,6 +37,13 @@ class LuaManager {
   void latchInputEvents();
   void beginInputFrame();
   void clearInputEvents();
+  bool hasPendingInputEvents() const;
+
+  // Coalesce Bursts - a queued press means the frame being drawn is already stale, so drop its
+  // panel push and let the final drain iteration display the settled state. Mirrors how native
+  // activities collapse several requestUpdate() calls into one refresh.
+  void setRefreshSuppressed(bool suppressed) { refreshSuppressed = suppressed; }
+  bool isRefreshSuppressed() const { return refreshSuppressed; }
   bool wasLatchedPressed(int button) const { return framePressed & (1u << button); }
   bool wasLatchedReleased(int button) const { return frameReleased & (1u << button); }
   bool isLatchedPressed(int button) const { return latchedHeld.load() & (1u << button); }
@@ -54,6 +61,7 @@ class LuaManager {
   std::atomic<uint16_t> latchedHeld{0};
   uint16_t framePressed = 0;  // render task only
   uint16_t frameReleased = 0;
+  bool refreshSuppressed = false;  // render task only
   std::unique_ptr<freeink::SecureHttpClient> httpClient;
   char lastError[192] = {};
 

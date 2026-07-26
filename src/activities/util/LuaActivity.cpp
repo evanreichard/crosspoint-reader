@@ -71,11 +71,19 @@ void LuaActivity::loop() {
 
 void LuaActivity::render(RenderLock&&) {
   if (state == State::Running) {
-    lua.beginInputFrame();
-    if (!lua.callFunction("draw")) {
-      state = State::Error;
-      renderError();
-    }
+    // Drain One Event Per draw() - apps read at most one press per call, so a burst needs one
+    // pass each to advance state. Only the final pass is allowed to touch the panel.
+    do {
+      lua.beginInputFrame();
+      lua.setRefreshSuppressed(lua.hasPendingInputEvents());
+      if (!lua.callFunction("draw")) {
+        lua.setRefreshSuppressed(false);
+        state = State::Error;
+        renderError();
+        return;
+      }
+    } while (lua.hasPendingInputEvents());
+    lua.setRefreshSuppressed(false);
     return;
   }
 
