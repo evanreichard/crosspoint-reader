@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <string>
 
 #include "activities/Activity.h"
@@ -19,10 +20,15 @@ class LuaActivity final : public Activity {
  private:
   enum class State { Loading, Running, Error };
 
+  // Matches the old per-loop draw() cadence closely enough for app-side polling without spinning
+  // the render task.
+  static constexpr unsigned long TICK_INTERVAL_MS = 33;
+
   LuaManager lua;
   std::string pluginName;
-  State state = State::Loading;
+  std::atomic<State> state{State::Loading};
   bool inputReady = false;
+  unsigned long lastTickMs = 0;
 
   void renderError();
 };
