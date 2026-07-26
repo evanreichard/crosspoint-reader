@@ -108,10 +108,15 @@ int guiClear(lua_State* state) {
 }
 
 int guiRefresh(lua_State* state) {
+  const int mode = luaL_optinteger(state, 1, HalDisplay::FAST_REFRESH);
   auto* manager = getManager(state);
-  if (manager && manager->isRefreshSuppressed()) return 0;
+  if (manager && manager->isRefreshSuppressed()) {
+    manager->holdRefresh(mode);
+    return 0;
+  }
+  if (manager) manager->dropHeldRefresh();
   if (auto* renderer = getRenderer(state)) {
-    renderer->displayBuffer(static_cast<HalDisplay::RefreshMode>(luaL_optinteger(state, 1, HalDisplay::FAST_REFRESH)));
+    renderer->displayBuffer(static_cast<HalDisplay::RefreshMode>(mode));
   }
   return 0;
 }
@@ -952,6 +957,12 @@ bool LuaManager::hasPendingInputEvents() const {
   return false;
 }
 
+void LuaManager::flushHeldRefresh(GfxRenderer& renderer) {
+  if (heldRefreshMode < 0) return;
+  renderer.displayBuffer(static_cast<HalDisplay::RefreshMode>(heldRefreshMode));
+  heldRefreshMode = -1;
+}
+
 void LuaManager::clearInputEvents() {
   for (auto& count : latchedPressed) count.store(0);
   for (auto& count : latchedReleased) count.store(0);
@@ -959,6 +970,7 @@ void LuaManager::clearInputEvents() {
   framePressed = 0;
   frameReleased = 0;
   refreshSuppressed = false;
+  heldRefreshMode = -1;
 }
 
 void LuaManager::end() {

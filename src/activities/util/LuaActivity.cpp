@@ -78,12 +78,14 @@ void LuaActivity::render(RenderLock&&) {
       lua.setRefreshSuppressed(lua.hasPendingInputEvents());
       if (!lua.callFunction("draw")) {
         lua.setRefreshSuppressed(false);
+        lua.dropHeldRefresh();
         state = State::Error;
         renderError();
         return;
       }
     } while (lua.hasPendingInputEvents());
     lua.setRefreshSuppressed(false);
+    lua.flushHeldRefresh(renderer);
     return;
   }
 
