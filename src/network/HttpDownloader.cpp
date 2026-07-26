@@ -4,7 +4,9 @@
 #include <Logging.h>
 #include <Memory.h>
 #include <base64.h>
+#include <mbedtls/sha256.h>
 
+#include <cstring>
 #include <functional>
 #include <string>
 
@@ -122,12 +124,6 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   config.buffer_size = HTTP_RX_BUF;
   config.buffer_size_tx = HTTP_TX_BUF;
   config.timeout_ms = HTTP_TIMEOUT_MS;
-  // Verify HTTPS against the bundled CA roots. This build has esp-tls
-  // CONFIG_ESP_TLS_INSECURE off, so an unverified TLS handshake can't be set
-  // up at all; the model is public servers over verified https and local
-  // servers over plain http (esp_http_client picks the transport from the URL
-  // scheme, so http:// needs no cert config). The prior setInsecure() worked
-  // only because Arduino's ssl_client drives mbedtls directly.
   config.crt_bundle_attach = esp_crt_bundle_attach;
   config.keep_alive_enable = true;
 
@@ -292,5 +288,70 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
     return HTTP_ERROR;
   }
   LOG_DBG("HTTP", "Downloaded %zu bytes", sink.downloaded);
+  return OK;
+}
+
+HttpDownloader::DownloadError HttpDownloader::downloadBoundedToFile(const std::string& url,
+                                                                    const std::string& destPath, size_t maxBytes,
+                                                                    size_t expectedSize, const uint8_t* expectedSha256,
+                                                                    size_t& bytesWritten) {
+  bytesWritten = 0;
+  if (url.rfind("https://", 0) != 0 || maxBytes == 0) {
+    LOG_ERR("HTTP", "Bounded download requires HTTPS and a byte limit");
+    return INVALID_URL;
+  }
+  if (Storage.exists(destPath.c_str())) {
+    LOG_ERR("HTTP", "Download destination exists: %s", destPath.c_str());
+    return FILE_ERROR;
+  }
+
+  HalFile file;
+  if (!Storage.openFileForWrite("HTTP", destPath.c_str(), file)) {
+    LOG_ERR("HTTP", "Failed to open download destination");
+    return FILE_ERROR;
+  }
+
+  mbedtls_sha256_context sha;
+  mbedtls_sha256_init(&sha);
+  mbedtls_sha256_starts(&sha, 0);
+
+  bool limitExceeded = false;
+  Sink sink;
+  sink.write = [&file, &sha, &sink, maxBytes, &limitExceeded](const uint8_t* data, size_t len) {
+    if (sink.downloaded > maxBytes || len > maxBytes - sink.downloaded) {
+      limitExceeded = true;
+      return false;
+    }
+    if (file.write(data, len) != len) return false;
+    mbedtls_sha256_update(&sha, data, len);
+    return true;
+  };
+
+  DownloadError result = runGetSecure(url, "", "", sink);
+  bytesWritten = sink.downloaded;
+  uint8_t digest[32];
+  if (result == OK) mbedtls_sha256_finish(&sha, digest);
+  mbedtls_sha256_free(&sha);
+  file.close();
+
+  if (limitExceeded) {
+    LOG_ERR("HTTP", "Download exceeded %zu bytes", maxBytes);
+    result = LIMIT_EXCEEDED;
+  }
+  if (result == OK && expectedSize > 0 && bytesWritten != expectedSize) {
+    LOG_ERR("HTTP", "Download size mismatch: got %zu, expected %zu", bytesWritten, expectedSize);
+    result = SIZE_MISMATCH;
+  }
+  if (result == OK && expectedSha256 && memcmp(digest, expectedSha256, sizeof(digest)) != 0) {
+    LOG_ERR("HTTP", "Download SHA-256 mismatch");
+    result = HASH_MISMATCH;
+  }
+
+  if (result != OK) {
+    Storage.remove(destPath.c_str());
+    return result;
+  }
+
+  LOG_DBG("HTTP", "Bounded download wrote %zu bytes", bytesWritten);
   return OK;
 }

@@ -1,13 +1,13 @@
 #pragma once
 #include <HalStorage.h>
 
+#include <cstdint>
 #include <functional>
 #include <string>
 
 /**
- * HTTP client utility for fetching content and downloading files. Built on
- * esp_http_client: https is verified against the CA bundle, plain http is
- * used for local servers (transport is chosen from the URL scheme).
+ * HTTP client utility for fetching content and downloading files. HTTPS is
+ * encrypted without validating the peer certificate.
  */
 class HttpDownloader {
  public:
@@ -21,6 +21,10 @@ class HttpDownloader {
     HTTP_ERROR,
     FILE_ERROR,
     ABORTED,
+    INVALID_URL,
+    LIMIT_EXCEEDED,
+    SIZE_MISMATCH,
+    HASH_MISMATCH,
   };
 
   /**
@@ -44,4 +48,7 @@ class HttpDownloader {
   static DownloadError downloadToFile(const std::string& url, const std::string& destPath,
                                       ProgressCallback progress = nullptr, bool* cancelFlag = nullptr,
                                       const std::string& username = "", const std::string& password = "");
+
+  static DownloadError downloadBoundedToFile(const std::string& url, const std::string& destPath, size_t maxBytes,
+                                             size_t expectedSize, const uint8_t* expectedSha256, size_t& bytesWritten);
 };
