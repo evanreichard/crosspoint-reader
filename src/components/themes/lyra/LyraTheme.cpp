@@ -13,6 +13,7 @@
 
 #include "RecentBooksStore.h"
 #include "components/UITheme.h"
+#include "components/icons/app-grid.h"
 #include "components/icons/book.h"
 #include "components/icons/book24.h"
 #include "components/icons/bookmark.h"
@@ -71,6 +72,8 @@ const uint8_t* iconForName(UIIcon icon, int size) {
         return TransferIcon;
       case UIIcon::Library:
         return LibraryIcon;
+      case UIIcon::AppGrid:
+        return AppGridIcon;
       case UIIcon::Wifi:
         return WifiIcon;
       case UIIcon::Hotspot:
