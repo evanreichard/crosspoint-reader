@@ -22,7 +22,7 @@ void AppsActivity::loadApps() {
   apps.clear();
   apps.reserve(8);
 
-  auto root = Storage.open("/plugins");
+  auto root = Storage.open("/.apps");
   if (!root || !root.isDirectory() || !scanBuffer) return;
   root.rewindDirectory();
 
@@ -35,7 +35,7 @@ void AppsActivity::loadApps() {
 
   for (size_t i = 0; i < apps.size();) {
     HalFile script;
-    if (!Storage.openFileForRead("APPS", "/plugins/" + apps[i].name + "/main.lua", script)) {
+    if (!Storage.openFileForRead("APPS", "/.apps/" + apps[i].name + "/main.lua", script)) {
       apps.erase(apps.begin() + i);
       continue;
     }

@@ -503,7 +503,7 @@ bool isSafeMutationPath(const char* path, bool allowProtectedRoot = false) {
 
   size_t length = strlen(path);
   while (length > 1 && path[length - 1] == '/') --length;
-  const bool protectedRoot = (length == 8 && strncmp(path, "/plugins", length) == 0) ||
+  const bool protectedRoot = (length == 6 && strncmp(path, "/.apps", length) == 0) ||
                              (length == 12 && strncmp(path, "/.crosspoint", length) == 0);
   return allowProtectedRoot || !protectedRoot;
 }
@@ -1014,7 +1014,7 @@ void LuaManager::registerBindings() {
 
 bool LuaManager::runPlugin(const std::string& pluginName) {
   if (!state) return false;
-  const std::string path = "/plugins/" + pluginName + "/main.lua";
+  const std::string path = "/.apps/" + pluginName + "/main.lua";
   auto reader = makeUniqueNoThrow<LuaFileReader>();
   if (!reader) {
     setError("Not enough memory to load plugin");
