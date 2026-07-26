@@ -21,6 +21,7 @@
 #include "WifiCredentialStore.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "network/HttpDownloader.h"
 
 extern "C" {
 #include <lauxlib.h>
@@ -38,6 +39,8 @@ unsigned long wifiAttemptStarted = 0;
 constexpr unsigned long WIFI_ATTEMPT_TIMEOUT_MS = 15000;
 constexpr size_t MAX_FILE_READ_SIZE = 50000;
 constexpr size_t MAX_HTTP_RESPONSE_SIZE = 50000;
+constexpr size_t MAX_LINE_READ_SIZE = 192;
+constexpr size_t MAX_DOWNLOAD_SIZE = 16 * 1024 * 1024;
 
 LuaManager* getManager(lua_State* state) {
   lua_getfield(state, LUA_REGISTRYINDEX, "manager");
@@ -412,6 +415,142 @@ int fsReadFile(lua_State* state) {
   return 1;
 }
 
+int fsFileSize(lua_State* state) {
+  HalFile file;
+  if (!Storage.openFileForRead("LUA", luaL_checkstring(state, 1), file) || file.isDirectory()) {
+    lua_pushnil(state);
+    return 1;
+  }
+  lua_pushinteger(state, static_cast<lua_Integer>(file.size()));
+  return 1;
+}
+
+int fsReadLineAt(lua_State* state) {
+  const char* path = luaL_checkstring(state, 1);
+  const lua_Integer requestedOffset = luaL_checkinteger(state, 2);
+  luaL_argcheck(state, requestedOffset >= 0, 2, "offset must be non-negative");
+
+  HalFile file;
+  if (!Storage.openFileForRead("LUA", path, file) || file.isDirectory()) {
+    lua_pushnil(state);
+    lua_pushnil(state);
+    return 2;
+  }
+
+  const size_t fileSize = file.size();
+  const size_t offset = static_cast<size_t>(requestedOffset);
+  if (offset >= fileSize) {
+    lua_pushnil(state);
+    lua_pushnil(state);
+    return 2;
+  }
+
+  if (offset > 0) {
+    if (!file.seek(offset - 1)) {
+      lua_pushnil(state);
+      lua_pushnil(state);
+      return 2;
+    }
+    if (file.read() != '\n') {
+      file.seek(offset);
+      int value;
+      do {
+        value = file.read();
+      } while (value >= 0 && value != '\n');
+      if (value < 0 || file.position() >= fileSize) {
+        lua_pushnil(state);
+        lua_pushnil(state);
+        return 2;
+      }
+    }
+  }
+
+  char line[MAX_LINE_READ_SIZE];
+  size_t length = 0;
+  bool overflow = false;
+  for (int value = file.read(); value >= 0 && value != '\n'; value = file.read()) {
+    if (value == '\r') continue;
+    if (length < sizeof(line)) {
+      line[length++] = static_cast<char>(value);
+    } else {
+      overflow = true;
+    }
+  }
+
+  if (overflow) {
+    lua_pushnil(state);
+  } else {
+    lua_pushlstring(state, line, length);
+  }
+  lua_pushinteger(state, static_cast<lua_Integer>(file.position()));
+  return 2;
+}
+
+bool isSafeMutationPath(const char* path, bool allowProtectedRoot = false) {
+  if (!path || path[0] != '/' || path[1] == '\0') return false;
+
+  const char* component = path + 1;
+  for (const char* cursor = component;; ++cursor) {
+    if (*cursor == '\\') return false;
+    if (*cursor != '/' && *cursor != '\0') continue;
+    const size_t length = cursor - component;
+    if ((length == 1 && component[0] == '.') || (length == 2 && component[0] == '.' && component[1] == '.')) {
+      return false;
+    }
+    if (*cursor == '\0') break;
+    component = cursor + 1;
+  }
+
+  size_t length = strlen(path);
+  while (length > 1 && path[length - 1] == '/') --length;
+  const bool protectedRoot = (length == 8 && strncmp(path, "/plugins", length) == 0) ||
+                             (length == 12 && strncmp(path, "/.crosspoint", length) == 0);
+  return allowProtectedRoot || !protectedRoot;
+}
+
+int pushFsResult(lua_State* state, bool ok, const char* error) {
+  if (ok) {
+    lua_pushboolean(state, true);
+    return 1;
+  }
+  LOG_ERR("LUA", "%s", error);
+  lua_pushnil(state);
+  lua_pushstring(state, error);
+  return 2;
+}
+
+int fsMkdir(lua_State* state) {
+  const char* path = luaL_checkstring(state, 1);
+  if (!isSafeMutationPath(path, true)) return pushFsResult(state, false, "Unsafe directory path");
+  if (Storage.exists(path)) {
+    auto existing = Storage.open(path);
+    return pushFsResult(state, existing && existing.isDirectory(), "Path exists and is not a directory");
+  }
+  return pushFsResult(state, Storage.mkdir(path), "Failed to create directory");
+}
+
+int fsRename(lua_State* state) {
+  const char* source = luaL_checkstring(state, 1);
+  const char* destination = luaL_checkstring(state, 2);
+  if (!isSafeMutationPath(source) || !isSafeMutationPath(destination)) {
+    return pushFsResult(state, false, "Unsafe rename path");
+  }
+  if (Storage.exists(destination)) return pushFsResult(state, false, "Rename destination exists");
+  return pushFsResult(state, Storage.rename(source, destination), "Failed to rename path");
+}
+
+int fsRemove(lua_State* state) {
+  const char* path = luaL_checkstring(state, 1);
+  if (!isSafeMutationPath(path)) return pushFsResult(state, false, "Unsafe remove path");
+  return pushFsResult(state, Storage.remove(path), "Failed to remove file");
+}
+
+int fsRemoveTree(lua_State* state) {
+  const char* path = luaL_checkstring(state, 1);
+  if (!isSafeMutationPath(path)) return pushFsResult(state, false, "Unsafe remove tree path");
+  return pushFsResult(state, Storage.removeDir(path), "Failed to remove directory tree");
+}
+
 int fsWriteFile(lua_State* state) {
   const char* path = luaL_checkstring(state, 1);
   size_t size = 0;
@@ -549,6 +688,106 @@ int netHead(lua_State* state) { return netRequest(state, "HEAD", false); }
 int netDelete(lua_State* state) { return netRequest(state, "DELETE", false); }
 int netPost(lua_State* state) { return netRequest(state, "POST", true); }
 int netPatch(lua_State* state) { return netRequest(state, "PATCH", true); }
+
+int pushLuaError(lua_State* state, const char* error) {
+  LOG_ERR("LUA", "%s", error);
+  lua_pushnil(state);
+  lua_pushstring(state, error);
+  return 2;
+}
+
+int hexValue(char value) {
+  if (value >= '0' && value <= '9') return value - '0';
+  value = static_cast<char>(std::tolower(static_cast<unsigned char>(value)));
+  return value >= 'a' && value <= 'f' ? value - 'a' + 10 : -1;
+}
+
+bool parseSha256(const char* value, size_t length, uint8_t* output) {
+  if (!value || length != 64) return false;
+  for (size_t i = 0; i < 32; ++i) {
+    const int high = hexValue(value[i * 2]);
+    const int low = hexValue(value[i * 2 + 1]);
+    if (high < 0 || low < 0) return false;
+    output[i] = static_cast<uint8_t>((high << 4) | low);
+  }
+  return true;
+}
+
+const char* downloadErrorMessage(HttpDownloader::DownloadError error) {
+  switch (error) {
+    case HttpDownloader::OK:
+      return "";
+    case HttpDownloader::HTTP_ERROR:
+      return "HTTPS download failed";
+    case HttpDownloader::FILE_ERROR:
+      return "Download destination failed";
+    case HttpDownloader::ABORTED:
+      return "Download aborted";
+    case HttpDownloader::INVALID_URL:
+      return "Download requires a valid HTTPS URL";
+    case HttpDownloader::LIMIT_EXCEEDED:
+      return "Download exceeded maxBytes";
+    case HttpDownloader::SIZE_MISMATCH:
+      return "Downloaded size did not match expectedSize";
+    case HttpDownloader::HASH_MISMATCH:
+      return "Downloaded SHA-256 did not match";
+  }
+  return "Download failed";
+}
+
+int netDownload(lua_State* state) {
+  const char* url = luaL_checkstring(state, 1);
+  const char* destination = luaL_checkstring(state, 2);
+  if (!lua_istable(state, 3)) return pushLuaError(state, "net.download options table is required");
+
+  lua_getfield(state, 3, "maxBytes");
+  if (!lua_isinteger(state, -1)) return pushLuaError(state, "maxBytes must be an integer");
+  const lua_Integer requestedMax = lua_tointeger(state, -1);
+  lua_pop(state, 1);
+  if (requestedMax <= 0 || static_cast<uint64_t>(requestedMax) > MAX_DOWNLOAD_SIZE) {
+    return pushLuaError(state, "maxBytes is outside the allowed range");
+  }
+  const size_t maxBytes = static_cast<size_t>(requestedMax);
+
+  size_t expectedSize = 0;
+  lua_getfield(state, 3, "expectedSize");
+  if (!lua_isnil(state, -1)) {
+    if (!lua_isinteger(state, -1) || lua_tointeger(state, -1) <= 0) {
+      return pushLuaError(state, "expectedSize must be a positive integer");
+    }
+    expectedSize = static_cast<size_t>(lua_tointeger(state, -1));
+    if (expectedSize > maxBytes) return pushLuaError(state, "expectedSize exceeds maxBytes");
+  }
+  lua_pop(state, 1);
+
+  uint8_t expectedHash[32];
+  const uint8_t* expectedHashPtr = nullptr;
+  lua_getfield(state, 3, "sha256");
+  if (!lua_isnil(state, -1)) {
+    size_t hashLength = 0;
+    const char* hash = lua_tolstring(state, -1, &hashLength);
+    if (!parseSha256(hash, hashLength, expectedHash)) return pushLuaError(state, "sha256 must be 64 hex characters");
+    expectedHashPtr = expectedHash;
+  }
+  lua_pop(state, 1);
+
+  lua_pushnil(state);
+  while (lua_next(state, 3)) {
+    const char* key = lua_tostring(state, -2);
+    if (!key || (strcmp(key, "maxBytes") != 0 && strcmp(key, "expectedSize") != 0 && strcmp(key, "sha256") != 0)) {
+      return pushLuaError(state, "Unknown net.download option");
+    }
+    lua_pop(state, 1);
+  }
+
+  size_t bytesWritten = 0;
+  const auto result =
+      HttpDownloader::downloadBoundedToFile(url, destination, maxBytes, expectedSize, expectedHashPtr, bytesWritten);
+  if (result != HttpDownloader::OK) return pushLuaError(state, downloadErrorMessage(result));
+
+  lua_pushinteger(state, static_cast<lua_Integer>(bytesWritten));
+  return 1;
+}
 
 int netUrlEncode(lua_State* state) {
   size_t size = 0;
@@ -706,6 +945,12 @@ void LuaManager::registerBindings() {
   addFunction(state, "listFiles", fsListFiles);
   addFunction(state, "exists", fsExists);
   addFunction(state, "readFile", fsReadFile);
+  addFunction(state, "fileSize", fsFileSize);
+  addFunction(state, "readLineAt", fsReadLineAt);
+  addFunction(state, "mkdir", fsMkdir);
+  addFunction(state, "rename", fsRename);
+  addFunction(state, "remove", fsRemove);
+  addFunction(state, "removeTree", fsRemoveTree);
   addFunction(state, "writeFile", fsWriteFile);
   lua_setglobal(state, "fs");
 
@@ -718,6 +963,7 @@ void LuaManager::registerBindings() {
   addFunction(state, "delete", netDelete);
   addFunction(state, "post", netPost);
   addFunction(state, "patch", netPatch);
+  addFunction(state, "download", netDownload);
   addFunction(state, "urlencode", netUrlEncode);
   lua_setglobal(state, "net");
 
