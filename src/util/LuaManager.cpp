@@ -88,8 +88,23 @@ Color getColor(lua_State* state, int index, Color fallback = Color::Black) {
 
 bool isBlack(Color color) { return color != Color::White && color != Color::Clear; }
 
-int luaLog(lua_State* state) {
+int luaLogDebug(lua_State* state) {
+  LOG_DBG("LUA", "%s", luaL_checkstring(state, 1));
+  return 0;
+}
+
+int luaLogInfo(lua_State* state) {
   LOG_INF("LUA", "%s", luaL_checkstring(state, 1));
+  return 0;
+}
+
+int luaLogError(lua_State* state) {
+  LOG_ERR("LUA", "%s", luaL_checkstring(state, 1));
+  return 0;
+}
+
+int luaLogLegacy(lua_State* state) {
+  LOG_INF("LUA", "%s", luaL_checkstring(state, 2));
   return 0;
 }
 
@@ -735,6 +750,13 @@ const char* downloadErrorMessage(HttpDownloader::DownloadError error) {
   return "Download failed";
 }
 
+// Empirical floor, not a measured peak: downloads are observed working at 31 KB free, and the
+// panic seen at 36 KB free was a 5 KB request failing against a fragmented heap. This lowers the
+// failure rate; it cannot rule one out, since fragmentation gates the handshake as much as free
+// bytes do. wolfSSL panics on a failed allocation rather than returning nullptr, so the check has
+// to happen here while a Lua error is still possible.
+constexpr uint32_t TLS_HEAP_FLOOR = 24 * 1024;
+
 int netDownload(lua_State* state) {
   const char* url = luaL_checkstring(state, 1);
   const char* destination = luaL_checkstring(state, 2);
@@ -780,9 +802,21 @@ int netDownload(lua_State* state) {
     lua_pop(state, 1);
   }
 
+  lua_gc(state, LUA_GCCOLLECT, 0);
+  auto* manager = getManager(state);
+  auto* client = manager ? manager->getHttpClient() : nullptr;
+  if (!client) return pushLuaError(state, "Not enough memory for HTTPS client");
+
+  // Pre-flight Heap Check - A failed allocation inside wolfSSL panics the device
+  // (CONFIG_HEAP_ABORT_WHEN_ALLOCATION_FAILS), so refuse the handshake here while a Lua error
+  // is still possible.
+  const uint32_t freeHeap = ESP.getFreeHeap();
+  LOG_INF("LUA", "Heap before download: %u", freeHeap);
+  if (freeHeap < TLS_HEAP_FLOOR) return pushLuaError(state, "Not enough memory to start a secure download");
+
   size_t bytesWritten = 0;
-  const auto result =
-      HttpDownloader::downloadBoundedToFile(url, destination, maxBytes, expectedSize, expectedHashPtr, bytesWritten);
+  const auto result = HttpDownloader::downloadBoundedToFile(url, destination, maxBytes, expectedSize, expectedHashPtr,
+                                                            bytesWritten, client);
   if (result != HttpDownloader::OK) return pushLuaError(state, downloadErrorMessage(result));
 
   lua_pushinteger(state, static_cast<lua_Integer>(bytesWritten));
@@ -893,7 +927,14 @@ void LuaManager::end() {
 }
 
 void LuaManager::registerBindings() {
-  lua_pushcfunction(state, luaLog);
+  lua_newtable(state);
+  addFunction(state, "debug", luaLogDebug);
+  addFunction(state, "info", luaLogInfo);
+  addFunction(state, "error", luaLogError);
+  lua_newtable(state);
+  lua_pushcfunction(state, luaLogLegacy);
+  lua_setfield(state, -2, "__call");
+  lua_setmetatable(state, -2);
   lua_setglobal(state, "log");
 
   lua_newtable(state);
