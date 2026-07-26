@@ -5,6 +5,10 @@
 #include <functional>
 #include <string>
 
+namespace freeink {
+class SecureHttpClient;
+}
+
 /**
  * HTTP client utility for fetching content and downloading files. HTTPS is
  * encrypted without validating the peer certificate.
@@ -50,5 +54,6 @@ class HttpDownloader {
                                       const std::string& username = "", const std::string& password = "");
 
   static DownloadError downloadBoundedToFile(const std::string& url, const std::string& destPath, size_t maxBytes,
-                                             size_t expectedSize, const uint8_t* expectedSha256, size_t& bytesWritten);
+                                             size_t expectedSize, const uint8_t* expectedSha256, size_t& bytesWritten,
+                                             freeink::SecureHttpClient* reusableClient = nullptr);
 };

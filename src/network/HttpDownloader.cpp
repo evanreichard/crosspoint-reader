@@ -48,14 +48,17 @@ bool isRedirect(int status) {
 }
 
 #if defined(FREEINK_NET_WOLFSSL)
-HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std::string& username,
-                                         const std::string& password, Sink& sink) {
+HttpDownloader::DownloadError runGetWolfWithClient(const std::string& startUrl, const std::string& username,
+                                                   const std::string& password, Sink& sink,
+                                                   freeink::SecureHttpClient& http) {
   std::string url = startUrl;
+  const bool requireHttps = url.rfind("https://", 0) == 0;
+  http.setTimeout(HTTP_TIMEOUT_MS);
+  http.setInsecure();
+  http.setFollowRedirects(0);
+  http.setAllowRedirectDowngrade(false);
 
   for (int hop = 0; hop <= MAX_REDIRECTS; ++hop) {
-    freeink::SecureHttpClient http;
-    http.setTimeout(HTTP_TIMEOUT_MS);
-    http.setInsecure();
     if (!http.begin(url)) {
       LOG_ERR("HTTP", "wolfSSL bad URL: %s", url.c_str());
       return HttpDownloader::HTTP_ERROR;
@@ -89,7 +92,8 @@ HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std:
     }
     if (isRedirect(status)) {
       const std::string location = http.getHeader("location");
-      if (location.empty() || !freeink::SecureHttpClient::resolveUrl(url, location, url)) {
+      if (location.empty() || !freeink::SecureHttpClient::resolveUrl(url, location, url) ||
+          (requireHttps && url.rfind("https://", 0) != 0)) {
         LOG_ERR("HTTP", "wolfSSL bad redirect: %d", status);
         return HttpDownloader::HTTP_ERROR;
       }
@@ -108,6 +112,14 @@ HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std:
   }
   LOG_ERR("HTTP", "too many redirects");
   return HttpDownloader::HTTP_ERROR;
+}
+
+HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std::string& username,
+                                         const std::string& password, Sink& sink,
+                                         freeink::SecureHttpClient* reusableClient = nullptr) {
+  if (reusableClient) return runGetWolfWithClient(startUrl, username, password, sink, *reusableClient);
+  freeink::SecureHttpClient localClient;
+  return runGetWolfWithClient(startUrl, username, password, sink, localClient);
 }
 #endif
 
@@ -217,10 +229,12 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
 // mbedTLS path fails to connect or stalls mid-stream. Plain-http URLs still use a
 // WiFiClient inside runGetWolf, so this is safe for non-TLS targets too.
 HttpDownloader::DownloadError runGetSecure(const std::string& url, const std::string& username,
-                                           const std::string& password, Sink& sink) {
+                                           const std::string& password, Sink& sink,
+                                           freeink::SecureHttpClient* reusableClient = nullptr) {
 #if defined(FREEINK_NET_WOLFSSL)
-  return runGetWolf(url, username, password, sink);
+  return runGetWolf(url, username, password, sink, reusableClient);
 #else
+  (void)reusableClient;
   return runGet(url, username, password, sink);
 #endif
 }
@@ -291,10 +305,10 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
   return OK;
 }
 
-HttpDownloader::DownloadError HttpDownloader::downloadBoundedToFile(const std::string& url,
-                                                                    const std::string& destPath, size_t maxBytes,
-                                                                    size_t expectedSize, const uint8_t* expectedSha256,
-                                                                    size_t& bytesWritten) {
+HttpDownloader::DownloadError HttpDownloader::downloadBoundedToFile(const std::string& url, const std::string& destPath,
+                                                                    size_t maxBytes, size_t expectedSize,
+                                                                    const uint8_t* expectedSha256, size_t& bytesWritten,
+                                                                    freeink::SecureHttpClient* reusableClient) {
   bytesWritten = 0;
   if (url.rfind("https://", 0) != 0 || maxBytes == 0) {
     LOG_ERR("HTTP", "Bounded download requires HTTPS and a byte limit");
@@ -327,7 +341,7 @@ HttpDownloader::DownloadError HttpDownloader::downloadBoundedToFile(const std::s
     return true;
   };
 
-  DownloadError result = runGetSecure(url, "", "", sink);
+  DownloadError result = runGetSecure(url, "", "", sink, reusableClient);
   bytesWritten = sink.downloaded;
   uint8_t digest[32];
   if (result == OK) mbedtls_sha256_finish(&sha, digest);
