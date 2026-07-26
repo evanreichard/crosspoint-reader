@@ -11,7 +11,14 @@ void LuaActivity::onEnter() {
   state = State::Loading;
   requestUpdateAndWait();
 
-  if (!lua.begin(renderer, mappedInput) || !lua.runPlugin(pluginName) || !lua.callFunction("init")) {
+  // Serialize Against The Render Task - every other Lua call happens in render(); holding the lock
+  // here keeps VM setup from overlapping a render of the loading screen.
+  bool started = false;
+  {
+    RenderLock lock(*this);
+    started = lua.begin(renderer, mappedInput) && lua.runPlugin(pluginName) && lua.callFunction("init");
+  }
+  if (!started) {
     state = State::Error;
     requestUpdate();
     return;
@@ -19,6 +26,7 @@ void LuaActivity::onEnter() {
 
   inputReady = false;
   state = State::Running;
+  requestUpdate();
 }
 
 void LuaActivity::onExit() {
@@ -48,15 +56,29 @@ void LuaActivity::loop() {
     return;
   }
 
-  RenderLock lock(*this);
-  if (!lua.callFunction("draw")) {
-    state = State::Error;
-    renderError();
-  }
+  // Poll On The Main Task - the render task can be inside a panel refresh or a download for a
+  // second or more, and input events survive only one poll, so latch them here and let the Lua
+  // call in render() drain them. Notifications coalesce, so a burst of presses costs one repaint.
+  lua.latchInputEvents();
+
+  // Apps poll state inside draw() (waiting on WiFi, timers), so keep ticking when idle rather
+  // than only on input. Notifications are cheap; the app decides whether to repaint the panel.
+  const unsigned long now = millis();
+  if (now - lastTickMs < TICK_INTERVAL_MS) return;
+  lastTickMs = now;
+  requestUpdate(true);
 }
 
 void LuaActivity::render(RenderLock&&) {
-  if (state == State::Running) return;
+  if (state == State::Running) {
+    lua.beginInputFrame();
+    if (!lua.callFunction("draw")) {
+      state = State::Error;
+      renderError();
+    }
+    return;
+  }
+
   renderer.clearScreen();
   if (state == State::Error) {
     renderError();

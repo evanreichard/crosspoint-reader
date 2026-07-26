@@ -63,12 +63,6 @@ MappedInputManager* getInput(lua_State* state) {
   return input;
 }
 
-bool isAnyButtonPressed(MappedInputManager& input) {
-  return input.isPressed(MappedInputManager::Button::Back) || input.isPressed(MappedInputManager::Button::Confirm) ||
-         input.isPressed(MappedInputManager::Button::Left) || input.isPressed(MappedInputManager::Button::Right) ||
-         input.isPressed(MappedInputManager::Button::Up) || input.isPressed(MappedInputManager::Button::Down);
-}
-
 MappedInputManager::Button parseButton(const char* name) {
   if (strcmp(name, "confirm") == 0) return MappedInputManager::Button::Confirm;
   if (strcmp(name, "left") == 0) return MappedInputManager::Button::Left;
@@ -327,26 +321,29 @@ int guiDrawBmp(lua_State* state) {
 }
 
 int inputWasPressed(lua_State* state) {
-  auto* input = getInput(state);
-  lua_pushboolean(state, input && input->wasPressed(parseButton(luaL_checkstring(state, 1))));
+  auto* manager = getManager(state);
+  lua_pushboolean(state,
+                  manager && manager->wasLatchedPressed(static_cast<int>(parseButton(luaL_checkstring(state, 1)))));
   return 1;
 }
 
 int inputWasReleased(lua_State* state) {
-  auto* input = getInput(state);
-  lua_pushboolean(state, input && input->wasReleased(parseButton(luaL_checkstring(state, 1))));
+  auto* manager = getManager(state);
+  lua_pushboolean(state,
+                  manager && manager->wasLatchedReleased(static_cast<int>(parseButton(luaL_checkstring(state, 1)))));
   return 1;
 }
 
 int inputIsPressed(lua_State* state) {
-  auto* input = getInput(state);
-  lua_pushboolean(state, input && input->isPressed(parseButton(luaL_checkstring(state, 1))));
+  auto* manager = getManager(state);
+  lua_pushboolean(state,
+                  manager && manager->isLatchedPressed(static_cast<int>(parseButton(luaL_checkstring(state, 1)))));
   return 1;
 }
 
 int inputIsAnyPressed(lua_State* state) {
-  auto* input = getInput(state);
-  lua_pushboolean(state, input && isAnyButtonPressed(*input));
+  auto* manager = getManager(state);
+  lua_pushboolean(state, manager && manager->isAnyLatchedPressed());
   return 1;
 }
 
@@ -884,6 +881,8 @@ SecureHttpClient* LuaManager::getHttpClient() {
 bool LuaManager::begin(GfxRenderer& renderer, MappedInputManager& input) {
   if (state) return true;
   wantsExit.store(false);
+  this->input = &input;
+  clearInputEvents();
   lastError[0] = '\0';
   LOG_INF("LUA", "Heap before VM: %u", ESP.getFreeHeap());
   state = luaL_newstate();
@@ -911,7 +910,50 @@ bool LuaManager::begin(GfxRenderer& renderer, MappedInputManager& input) {
   return true;
 }
 
+void LuaManager::latchInputEvents() {
+  if (!input) return;
+  static constexpr MappedInputManager::Button LATCHED[] = {
+      MappedInputManager::Button::Back,     MappedInputManager::Button::Confirm,     MappedInputManager::Button::Left,
+      MappedInputManager::Button::Right,    MappedInputManager::Button::Up,          MappedInputManager::Button::Down,
+      MappedInputManager::Button::PageBack, MappedInputManager::Button::PageForward,
+  };
+  uint16_t held = 0;
+  for (const auto button : LATCHED) {
+    const auto index = static_cast<size_t>(button);
+    const auto bit = static_cast<uint16_t>(1u << index);
+    if (input->wasPressed(button)) latchedPressed[index].fetch_add(1);
+    if (input->wasReleased(button)) latchedReleased[index].fetch_add(1);
+    if (input->isPressed(button)) held |= bit;
+  }
+  latchedHeld.store(held);
+}
+
+void LuaManager::beginInputFrame() {
+  framePressed = 0;
+  frameReleased = 0;
+  const auto consumeOne = [](std::atomic<uint16_t>& count) {
+    uint16_t value = count.load();
+    while (value > 0 && !count.compare_exchange_weak(value, value - 1)) {
+    }
+    return value > 0;
+  };
+  for (size_t i = 0; i < INPUT_BUTTON_COUNT; ++i) {
+    if (consumeOne(latchedPressed[i])) framePressed |= 1u << i;
+    if (consumeOne(latchedReleased[i])) frameReleased |= 1u << i;
+  }
+}
+
+void LuaManager::clearInputEvents() {
+  for (auto& count : latchedPressed) count.store(0);
+  for (auto& count : latchedReleased) count.store(0);
+  latchedHeld.store(0);
+  framePressed = 0;
+  frameReleased = 0;
+}
+
 void LuaManager::end() {
+  input = nullptr;
+  clearInputEvents();
   httpClient.reset();
   if (state) {
     lua_close(state);

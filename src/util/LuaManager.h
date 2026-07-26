@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <memory>
 #include <string>
@@ -28,12 +29,31 @@ class LuaManager {
 
   void requestExit() { wantsExit.store(true); }
   bool checkAndClearExit() { return wantsExit.exchange(false); }
+
+  // Latched Input - Lua runs on the render task, but InputManager overwrites its event bits on
+  // every poll of the main task, so an event would be gone before Lua could read it. The activity
+  // latches events as it polls (main task); beginInputFrame() hands them to the bindings and
+  // reopens the latch, so presses arriving mid-draw survive to the next call.
+  void latchInputEvents();
+  void beginInputFrame();
+  void clearInputEvents();
+  bool wasLatchedPressed(int button) const { return framePressed & (1u << button); }
+  bool wasLatchedReleased(int button) const { return frameReleased & (1u << button); }
+  bool isLatchedPressed(int button) const { return latchedHeld.load() & (1u << button); }
+  bool isAnyLatchedPressed() const { return latchedHeld.load() != 0; }
   const char* getLastError() const { return lastError; }
   freeink::SecureHttpClient* getHttpClient();
 
  private:
   lua_State* state = nullptr;
   std::atomic_bool wantsExit{false};
+  MappedInputManager* input = nullptr;
+  static constexpr size_t INPUT_BUTTON_COUNT = 9;  // Back through PageForward
+  std::array<std::atomic<uint16_t>, INPUT_BUTTON_COUNT> latchedPressed{};
+  std::array<std::atomic<uint16_t>, INPUT_BUTTON_COUNT> latchedReleased{};
+  std::atomic<uint16_t> latchedHeld{0};
+  uint16_t framePressed = 0;  // render task only
+  uint16_t frameReleased = 0;
   std::unique_ptr<freeink::SecureHttpClient> httpClient;
   char lastError[192] = {};
 
