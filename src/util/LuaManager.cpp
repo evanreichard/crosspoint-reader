@@ -646,6 +646,21 @@ int netWifiDisconnect(lua_State*) {
   return 0;
 }
 
+// Empirical floors, not measured peaks: downloads are observed working at 31 KB free, and the
+// panic seen at 36 KB free was a 5 KB request failing against a fragmented heap, so a contiguous
+// block is required alongside the total. wolfSSL panics on a failed allocation and the Arduino
+// HTTP stack allocates with throwing new, so the check has to happen here while a Lua error is
+// still possible.
+constexpr uint32_t TLS_HEAP_FLOOR = 24 * 1024;
+constexpr uint32_t TLS_BLOCK_FLOOR = 8 * 1024;
+
+bool hasTlsHeadroom() {
+  const uint32_t freeHeap = ESP.getFreeHeap();
+  const uint32_t largestBlock = ESP.getMaxAllocHeap();
+  LOG_INF("LUA", "Heap before TLS: free %u, largest %u", freeHeap, largestBlock);
+  return freeHeap >= TLS_HEAP_FLOOR && largestBlock >= TLS_BLOCK_FLOOR;
+}
+
 int netRequest(lua_State* state, const char* method, bool bodyExpected) {
   auto* manager = getManager(state);
   auto* client = manager ? manager->getHttpClient() : nullptr;
@@ -664,7 +679,9 @@ int netRequest(lua_State* state, const char* method, bool bodyExpected) {
     headersIndex = 3;
   }
 
-  if (!client->begin(url)) {
+  // Same Pre-flight As net.download - the Arduino HTTP stack allocates with throwing new, so an
+  // OOM here terminates the firmware instead of returning an error to the app.
+  if (!hasTlsHeadroom() || !client->begin(url)) {
     lua_pushnil(state);
     lua_pushinteger(state, -1);
     return 2;
@@ -754,13 +771,6 @@ const char* downloadErrorMessage(HttpDownloader::DownloadError error) {
   return "Download failed";
 }
 
-// Empirical floor, not a measured peak: downloads are observed working at 31 KB free, and the
-// panic seen at 36 KB free was a 5 KB request failing against a fragmented heap. This lowers the
-// failure rate; it cannot rule one out, since fragmentation gates the handshake as much as free
-// bytes do. wolfSSL panics on a failed allocation rather than returning nullptr, so the check has
-// to happen here while a Lua error is still possible.
-constexpr uint32_t TLS_HEAP_FLOOR = 24 * 1024;
-
 int netDownload(lua_State* state) {
   const char* url = luaL_checkstring(state, 1);
   const char* destination = luaL_checkstring(state, 2);
@@ -814,9 +824,7 @@ int netDownload(lua_State* state) {
   // Pre-flight Heap Check - A failed allocation inside wolfSSL panics the device
   // (CONFIG_HEAP_ABORT_WHEN_ALLOCATION_FAILS), so refuse the handshake here while a Lua error
   // is still possible.
-  const uint32_t freeHeap = ESP.getFreeHeap();
-  LOG_INF("LUA", "Heap before download: %u", freeHeap);
-  if (freeHeap < TLS_HEAP_FLOOR) return pushLuaError(state, "Not enough memory to start a secure download");
+  if (!hasTlsHeadroom()) return pushLuaError(state, "Not enough memory to start a secure download");
 
   size_t bytesWritten = 0;
   const auto result = HttpDownloader::downloadBoundedToFile(url, destination, maxBytes, expectedSize, expectedHashPtr,
