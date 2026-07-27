@@ -1,5 +1,6 @@
 #include "LuaActivity.h"
 
+#include <FontCacheManager.h>
 #include <I18n.h>
 
 #include <cstdio>
@@ -31,6 +32,14 @@ void LuaActivity::onEnter() {
 
 void LuaActivity::onExit() {
   lua.end();
+
+  // Release The Glyph Cache - app text uses the compressed reading fonts through the
+  // non-prewarmed path, which parks a ~10 KB decompressed group in the global FontDecompressor
+  // for the rest of the boot. Native screens prewarm and release per page, so nothing else
+  // reclaims it.
+  // onExit() already runs under the render lock held by ActivityManager::exitActivity().
+  if (auto* fcm = renderer.getFontCacheManager()) fcm->clearCache();
+
   Activity::onExit();
 }
 
