@@ -2,9 +2,11 @@
 
 #include <Arduino.h>
 #include <Bitmap.h>
+#include <BuildScratch.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <Memory.h>
+#include <ScratchHeap.h>
 #include <SecureHttpClient.h>
 #include <WiFi.h>
 #include <esp_random.h>
@@ -13,6 +15,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -22,6 +25,7 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "network/HttpDownloader.h"
+#include "network/TlsScratch.h"
 
 extern "C" {
 #include <lauxlib.h>
@@ -654,10 +658,63 @@ int netWifiDisconnect(lua_State*) {
 constexpr uint32_t TLS_HEAP_FLOOR = 24 * 1024;
 constexpr uint32_t TLS_BLOCK_FLOOR = 8 * 1024;
 
+// Only wolfSSL's small allocations still land on the heap once the framebuffer is lent.
+constexpr uint32_t TLS_SCRATCH_HEAP_FLOOR = 10 * 1024;
+
+// Lend The Framebuffer To wolfSSL - by the time an app transfers, Wi-Fi and the Lua VM have left
+// the heap's largest block (~22 KB) barely above wolfSSL's ~17 KB record buffer. The framebuffer's
+// bytes are lent in place and never freed, so the panel keeps showing its last frame and the block
+// cannot fail to come back. Lua is blocked inside the transfer call, so nothing can draw meanwhile.
+class TlsScratchLoan {
+ public:
+  TlsScratchLoan(lua_State* state, freeink::SecureHttpClient* client) : client_(client) {
+    auto* renderer = getRenderer(state);
+    if (!renderer || !client_) return;
+
+    loan_.emplace(*renderer);
+    size_t length = 0;
+    scratch_ = buildscratch::claim(MIN_TLS_SCRATCH, &length);
+    if (!scratch_ || !tlsscratch::activate(scratch_, length)) {
+      if (scratch_) buildscratch::release(scratch_);
+      scratch_ = nullptr;
+      loan_.reset();  // hand the framebuffer straight back; the transfer falls back to the heap
+      return;
+    }
+    LOG_DBG("LUA", "TLS scratch: %u bytes lent from the framebuffer", (unsigned)length);
+  }
+
+  ~TlsScratchLoan() {
+    if (scratch_) {
+      // Close The Session First - a reusable client keeps the connection (and wolfSSL's buffers)
+      // alive after a transfer, and those buffers live in the block we are about to hand back.
+      client_->end();
+      tlsscratch::deactivate();
+      buildscratch::release(scratch_);
+    }
+    loan_.reset();
+  }
+
+  TlsScratchLoan(const TlsScratchLoan&) = delete;
+  TlsScratchLoan& operator=(const TlsScratchLoan&) = delete;
+
+ private:
+  static constexpr size_t MIN_TLS_SCRATCH = 24 * 1024;
+
+  freeink::SecureHttpClient* client_;
+  std::optional<GfxRenderer::FrameBufferLoan> loan_;
+  uint8_t* scratch_ = nullptr;
+};
+
 bool hasTlsHeadroom() {
   const uint32_t freeHeap = ESP.getFreeHeap();
   const uint32_t largestBlock = ESP.getMaxAllocHeap();
-  LOG_INF("LUA", "Heap before TLS: free %u, largest %u", freeHeap, largestBlock);
+  const bool scratchActive = scratchheap::isActive();
+  LOG_INF("LUA", "Heap before TLS: free %u, largest %u%s", freeHeap, largestBlock,
+          scratchActive ? ", framebuffer lent" : "");
+
+  // With the framebuffer lent, wolfSSL's big buffers no longer come from the heap, so the floors
+  // that exist to keep the handshake off a fragmented heap would refuse transfers that now fit.
+  if (scratchActive) return freeHeap >= TLS_SCRATCH_HEAP_FLOOR;
   return freeHeap >= TLS_HEAP_FLOOR && largestBlock >= TLS_BLOCK_FLOOR;
 }
 
@@ -678,6 +735,8 @@ int netRequest(lua_State* state, const char* method, bool bodyExpected) {
     body = luaL_optlstring(state, 2, "", &bodySize);
     headersIndex = 3;
   }
+
+  const TlsScratchLoan scratch(state, client);
 
   // Same Pre-flight As net.download - the Arduino HTTP stack allocates with throwing new, so an
   // OOM here terminates the firmware instead of returning an error to the app.
@@ -824,6 +883,10 @@ int netDownload(lua_State* state) {
   // Pre-flight Heap Check - A failed allocation inside wolfSSL panics the device
   // (CONFIG_HEAP_ABORT_WHEN_ALLOCATION_FAILS), so refuse the handshake here while a Lua error
   // is still possible.
+  // Lend Before Measuring - the loan is what makes the transfer affordable, so the pre-flight has
+  // to see the heap as it will be during the handshake, not before.
+  const TlsScratchLoan scratch(state, client);
+
   if (!hasTlsHeadroom()) return pushLuaError(state, "Not enough memory to start a secure download");
 
   size_t bytesWritten = 0;
