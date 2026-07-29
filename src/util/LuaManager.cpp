@@ -45,6 +45,12 @@ constexpr size_t MAX_FILE_READ_SIZE = 50000;
 constexpr size_t MAX_HTTP_RESPONSE_SIZE = 50000;
 constexpr size_t MAX_LINE_READ_SIZE = 192;
 constexpr size_t MAX_DOWNLOAD_SIZE = 16 * 1024 * 1024;
+constexpr uint32_t MIN_TIMER_INTERVAL_MS = 100;
+constexpr uint32_t MIN_TICK_INTERVAL_MS = 33;
+constexpr uint32_t MAX_RUNTIME_INTERVAL_MS = 60 * 60 * 1000;
+portMUX_TYPE luaRuntimeSpinlock = portMUX_INITIALIZER_UNLOCKED;
+
+bool deadlineReached(uint32_t now, uint32_t deadline) { return static_cast<int32_t>(now - deadline) >= 0; }
 
 LuaManager* getManager(lua_State* state) {
   lua_getfield(state, LUA_REGISTRYINDEX, "manager");
@@ -370,6 +376,50 @@ int sysDelay(lua_State* state) {
 
 int sysExit(lua_State* state) {
   if (auto* manager = getManager(state)) manager->requestExit();
+  return 0;
+}
+
+int appSetTickInterval(lua_State* state) {
+  const lua_Integer requested = luaL_checkinteger(state, 1);
+  luaL_argcheck(state, requested >= 0 && requested <= MAX_RUNTIME_INTERVAL_MS, 1, "interval must be 0-3600000ms");
+  const uint32_t interval = requested == 0 ? 0 : std::max<uint32_t>(requested, MIN_TICK_INTERVAL_MS);
+  if (auto* manager = getManager(state)) manager->setTickInterval(interval);
+  return 0;
+}
+
+bool isValidTimerId(const char* id, size_t length) {
+  if (length == 0 || length >= 32) return false;
+  for (size_t i = 0; i < length; ++i) {
+    const unsigned char c = id[i];
+    const bool alphanumeric = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+    if (!alphanumeric && c != '_' && c != '-') return false;
+  }
+  return true;
+}
+
+int addTimer(lua_State* state, bool repeating) {
+  const lua_Integer requested = luaL_checkinteger(state, 1);
+  luaL_argcheck(state, requested >= MIN_TIMER_INTERVAL_MS && requested <= MAX_RUNTIME_INTERVAL_MS, 1,
+                "interval must be 100-3600000ms");
+  size_t idLength = 0;
+  const char* id = luaL_checklstring(state, 2, &idLength);
+  luaL_argcheck(state, isValidTimerId(id, idLength), 2, "id must be 1-31 letters, digits, underscores, or dashes");
+  auto* manager = getManager(state);
+  if (!manager || !manager->addTimer(static_cast<uint32_t>(requested), id, repeating)) {
+    return luaL_error(state, "timer limit reached");
+  }
+  return 0;
+}
+
+int timerAfter(lua_State* state) { return addTimer(state, false); }
+
+int timerEvery(lua_State* state) { return addTimer(state, true); }
+
+int timerCancel(lua_State* state) {
+  size_t idLength = 0;
+  const char* id = luaL_checklstring(state, 1, &idLength);
+  luaL_argcheck(state, isValidTimerId(id, idLength), 1, "id must be 1-31 letters, digits, underscores, or dashes");
+  if (auto* manager = getManager(state)) manager->cancelTimer(id);
   return 0;
 }
 
@@ -961,6 +1011,7 @@ bool LuaManager::begin(GfxRenderer& renderer, MappedInputManager& input) {
   wantsExit.store(false);
   this->input = &input;
   clearInputEvents();
+  resetRuntime();
   lastError[0] = '\0';
   LOG_INF("LUA", "Heap before VM: %u", ESP.getFreeHeap());
   state = luaL_newstate();
@@ -1006,6 +1057,22 @@ void LuaManager::latchInputEvents() {
   latchedHeld.store(held);
 }
 
+bool LuaManager::enqueueButtonEvents() {
+  if (!input || !hasOnButton) return false;
+  static constexpr MappedInputManager::Button BUTTONS[] = {
+      MappedInputManager::Button::Back,  MappedInputManager::Button::Confirm,  MappedInputManager::Button::Left,
+      MappedInputManager::Button::Right, MappedInputManager::Button::PageBack, MappedInputManager::Button::PageForward,
+  };
+  const auto edges = input->getButtonEdges();
+  bool queued = false;
+  for (uint8_t i = 0; i < std::size(BUTTONS); ++i) {
+    const uint16_t bit = 1u << static_cast<uint8_t>(BUTTONS[i]);
+    if (edges.pressed & bit) queued = enqueueEvent({EventType::Button, i, true, {}}) || queued;
+    if (edges.released & bit) queued = enqueueEvent({EventType::Button, i, false, {}}) || queued;
+  }
+  return queued;
+}
+
 void LuaManager::beginInputFrame() {
   framePressed = 0;
   frameReleased = 0;
@@ -1044,9 +1111,261 @@ void LuaManager::clearInputEvents() {
   heldRefreshMode = -1;
 }
 
+void LuaManager::resetRuntime() {
+  taskENTER_CRITICAL(&luaRuntimeSpinlock);
+  eventHead = 0;
+  eventCount = 0;
+  tickIntervalMs = 0;
+  tickDeadlineMs = 0;
+  drawDeadlineMs = 0;
+  tickPending = false;
+  drawPending = false;
+  overflowLogged = false;
+  hasDraw = false;
+  hasOnButton = false;
+  for (auto& timer : timers) timer = Timer{};
+  taskEXIT_CRITICAL(&luaRuntimeSpinlock);
+}
+
+bool LuaManager::initializeRuntime() {
+  const bool draw = hasFunction("draw");
+  const bool onTick = hasFunction("on_tick");
+  const bool onButton = hasFunction("on_button");
+  const bool onTimer = hasFunction("on_timer");
+  const uint32_t now = millis();
+  bool timersActive = false;
+  bool tickActive = false;
+  taskENTER_CRITICAL(&luaRuntimeSpinlock);
+  hasDraw = draw;
+  hasOnButton = onButton;
+  drawPending = draw;
+  drawDeadlineMs = now + DRAW_INTERVAL_MS;
+  if (tickIntervalMs > 0) tickDeadlineMs = now + tickIntervalMs;
+  tickActive = tickIntervalMs > 0;
+  for (const auto& timer : timers) timersActive = timersActive || timer.active;
+  taskEXIT_CRITICAL(&luaRuntimeSpinlock);
+  if (tickActive && !onTick) {
+    setError("Missing on_tick()");
+    LOG_ERR("LUA", "%s", lastError);
+    return false;
+  }
+  if (timersActive && !onTimer) {
+    setError("Missing on_timer()");
+    LOG_ERR("LUA", "%s", lastError);
+    return false;
+  }
+  return true;
+}
+
+bool LuaManager::enqueueEvent(const RuntimeEvent& event) {
+  bool queued = false;
+  bool logOverflow = false;
+  taskENTER_CRITICAL(&luaRuntimeSpinlock);
+  if (eventCount < EVENT_CAPACITY) {
+    events[(eventHead + eventCount) % EVENT_CAPACITY] = event;
+    ++eventCount;
+    queued = true;
+  } else if (!overflowLogged) {
+    overflowLogged = true;
+    logOverflow = true;
+  }
+  taskEXIT_CRITICAL(&luaRuntimeSpinlock);
+  if (logOverflow) LOG_ERR("LUA", "Event queue full; rejecting incoming event");
+  return queued;
+}
+
+bool LuaManager::popEvent(RuntimeEvent& event) {
+  taskENTER_CRITICAL(&luaRuntimeSpinlock);
+  if (eventCount == 0) {
+    taskEXIT_CRITICAL(&luaRuntimeSpinlock);
+    return false;
+  }
+  event = events[eventHead];
+  eventHead = (eventHead + 1) % EVENT_CAPACITY;
+  --eventCount;
+  overflowLogged = false;
+  taskEXIT_CRITICAL(&luaRuntimeSpinlock);
+  return true;
+}
+
+void LuaManager::removeQueuedEvents(EventType type, const char* timerId) {
+  size_t kept = 0;
+  for (size_t i = 0; i < eventCount; ++i) {
+    const size_t read = (eventHead + i) % EVENT_CAPACITY;
+    const bool matches = events[read].type == type &&
+                         (type != EventType::Timer || (timerId && strcmp(events[read].timerId, timerId) == 0));
+    if (!matches) {
+      events[(eventHead + kept) % EVENT_CAPACITY] = events[read];
+      ++kept;
+    }
+  }
+  eventCount = kept;
+}
+
+bool LuaManager::preventsAutoSleep() {
+  taskENTER_CRITICAL(&luaRuntimeSpinlock);
+  const bool prevent = hasDraw || tickIntervalMs > 0;
+  taskEXIT_CRITICAL(&luaRuntimeSpinlock);
+  return prevent;
+}
+
+void LuaManager::setTickInterval(uint32_t intervalMs) {
+  const uint32_t now = millis();
+  taskENTER_CRITICAL(&luaRuntimeSpinlock);
+  removeQueuedEvents(EventType::Tick);
+  tickPending = false;
+  tickIntervalMs = intervalMs;
+  tickDeadlineMs = intervalMs > 0 ? now + intervalMs : 0;
+  taskEXIT_CRITICAL(&luaRuntimeSpinlock);
+}
+
+bool LuaManager::addTimer(uint32_t intervalMs, const char* id, bool repeating) {
+  const uint32_t now = millis();
+  taskENTER_CRITICAL(&luaRuntimeSpinlock);
+  Timer* slot = nullptr;
+  for (auto& timer : timers) {
+    if (timer.active && strcmp(timer.id, id) == 0) {
+      slot = &timer;
+      break;
+    }
+    if (!timer.active && !slot) slot = &timer;
+  }
+  if (!slot) {
+    taskEXIT_CRITICAL(&luaRuntimeSpinlock);
+    return false;
+  }
+  removeQueuedEvents(EventType::Timer, id);
+  *slot = Timer{};
+  slot->active = true;
+  slot->repeating = repeating;
+  slot->intervalMs = intervalMs;
+  slot->deadlineMs = now + intervalMs;
+  snprintf(slot->id, sizeof(slot->id), "%s", id);
+  taskEXIT_CRITICAL(&luaRuntimeSpinlock);
+  return true;
+}
+
+void LuaManager::cancelTimer(const char* id) {
+  taskENTER_CRITICAL(&luaRuntimeSpinlock);
+  for (auto& timer : timers) {
+    if (timer.active && strcmp(timer.id, id) == 0) timer = Timer{};
+  }
+  removeQueuedEvents(EventType::Timer, id);
+  taskEXIT_CRITICAL(&luaRuntimeSpinlock);
+}
+
+bool LuaManager::pollRuntime(uint32_t now) {
+  bool queued = false;
+  bool logOverflow = false;
+  taskENTER_CRITICAL(&luaRuntimeSpinlock);
+  const auto pushEvent = [&](const RuntimeEvent& event) {
+    if (eventCount >= EVENT_CAPACITY) {
+      if (!overflowLogged) {
+        overflowLogged = true;
+        logOverflow = true;
+      }
+      return false;
+    }
+    events[(eventHead + eventCount) % EVENT_CAPACITY] = event;
+    ++eventCount;
+    queued = true;
+    return true;
+  };
+
+  if (hasDraw && !drawPending && deadlineReached(now, drawDeadlineMs)) {
+    drawPending = true;
+    drawDeadlineMs = now + DRAW_INTERVAL_MS;
+    queued = true;
+  }
+  if (tickIntervalMs > 0 && !tickPending && deadlineReached(now, tickDeadlineMs)) {
+    if (pushEvent({EventType::Tick, 0, false, {}})) tickPending = true;
+    if (!tickPending) tickDeadlineMs = now + tickIntervalMs;
+  }
+  for (auto& timer : timers) {
+    if (!timer.active || timer.pending || !deadlineReached(now, timer.deadlineMs)) continue;
+    RuntimeEvent event;
+    event.type = EventType::Timer;
+    snprintf(event.timerId, sizeof(event.timerId), "%s", timer.id);
+    if (pushEvent(event)) {
+      timer.pending = true;
+    } else if (timer.repeating) {
+      timer.deadlineMs = now + timer.intervalMs;
+    } else {
+      timer = Timer{};
+    }
+  }
+  taskEXIT_CRITICAL(&luaRuntimeSpinlock);
+  if (logOverflow) LOG_ERR("LUA", "Event queue full; rejecting incoming event");
+  return queued;
+}
+
+bool LuaManager::dispatchPending(GfxRenderer& renderer) {
+  static constexpr const char* BUTTON_NAMES[] = {"back", "confirm", "left", "right", "page_back", "page_forward"};
+  size_t eventsToDispatch = 0;
+  bool runDraw = false;
+  taskENTER_CRITICAL(&luaRuntimeSpinlock);
+  eventsToDispatch = eventCount;
+  runDraw = drawPending;
+  drawPending = false;
+  taskEXIT_CRITICAL(&luaRuntimeSpinlock);
+
+  bool ok = true;
+  const bool batchRefresh = eventsToDispatch + (runDraw ? 1 : 0) > 1;
+  setRefreshSuppressed(batchRefresh);
+
+  RuntimeEvent event;
+  for (size_t dispatched = 0; dispatched < eventsToDispatch && popEvent(event); ++dispatched) {
+    if (event.type == EventType::Button) {
+      ok = callFunction("on_button", BUTTON_NAMES[event.button], event.down ? "down" : "up");
+    } else if (event.type == EventType::Timer) {
+      ok = callFunction("on_timer", event.timerId);
+      const uint32_t now = millis();
+      taskENTER_CRITICAL(&luaRuntimeSpinlock);
+      for (auto& timer : timers) {
+        if (!timer.active || !timer.pending || strcmp(timer.id, event.timerId) != 0) continue;
+        if (timer.repeating) {
+          timer.pending = false;
+          timer.deadlineMs = now + timer.intervalMs;
+        } else {
+          timer = Timer{};
+        }
+        break;
+      }
+      taskEXIT_CRITICAL(&luaRuntimeSpinlock);
+    } else {
+      ok = callFunction("on_tick");
+      const uint32_t now = millis();
+      taskENTER_CRITICAL(&luaRuntimeSpinlock);
+      if (tickPending) {
+        tickPending = false;
+        tickDeadlineMs = tickIntervalMs > 0 ? now + tickIntervalMs : 0;
+      }
+      taskEXIT_CRITICAL(&luaRuntimeSpinlock);
+    }
+    if (!ok) break;
+  }
+
+  if (ok && runDraw) {
+    do {
+      beginInputFrame();
+      if (!batchRefresh) setRefreshSuppressed(hasPendingInputEvents());
+      ok = callFunction("draw");
+    } while (ok && hasPendingInputEvents());
+  }
+
+  setRefreshSuppressed(false);
+  if (ok) {
+    flushHeldRefresh(renderer);
+  } else {
+    dropHeldRefresh();
+  }
+  return ok;
+}
+
 void LuaManager::end() {
   input = nullptr;
   clearInputEvents();
+  resetRuntime();
   httpClient.reset();
   if (state) {
     lua_close(state);
@@ -1115,6 +1434,16 @@ void LuaManager::registerBindings() {
   addFunction(state, "delay", sysDelay);
   addFunction(state, "exit", sysExit);
   lua_setglobal(state, "sys");
+
+  lua_newtable(state);
+  addFunction(state, "setTickInterval", appSetTickInterval);
+  lua_setglobal(state, "app");
+
+  lua_newtable(state);
+  addFunction(state, "after", timerAfter);
+  addFunction(state, "every", timerEvery);
+  addFunction(state, "cancel", timerCancel);
+  lua_setglobal(state, "timer");
 
   lua_newtable(state);
   addFunction(state, "listDirs", fsListDirs);
@@ -1237,19 +1566,41 @@ bool LuaManager::runPlugin(const std::string& pluginName) {
   return true;
 }
 
-bool LuaManager::callFunction(const char* functionName) {
+bool LuaManager::hasFunction(const char* functionName) {
   if (!state) return false;
+  const int stackTop = lua_gettop(state);
+  lua_getglobal(state, functionName);
+  const bool found = lua_isfunction(state, -1);
+  lua_settop(state, stackTop);
+  return found;
+}
+
+bool LuaManager::callFunction(const char* functionName) { return callFunction(functionName, nullptr, nullptr); }
+
+bool LuaManager::callFunction(const char* functionName, const char* firstArg, const char* secondArg) {
+  if (!state) return false;
+  const int stackTop = lua_gettop(state);
   lua_getglobal(state, functionName);
   if (!lua_isfunction(state, -1)) {
-    lua_pop(state, 1);
+    lua_settop(state, stackTop);
     snprintf(lastError, sizeof(lastError), "Missing %s()", functionName);
     return false;
   }
-  if (lua_pcall(state, 0, 0, 0) != LUA_OK) {
+  int argumentCount = 0;
+  if (firstArg) {
+    lua_pushstring(state, firstArg);
+    ++argumentCount;
+  }
+  if (secondArg) {
+    lua_pushstring(state, secondArg);
+    ++argumentCount;
+  }
+  if (lua_pcall(state, argumentCount, 0, 0) != LUA_OK) {
     setError(lua_tostring(state, -1));
     LOG_ERR("LUA", "%s", lastError);
-    lua_pop(state, 1);
+    lua_settop(state, stackTop);
     return false;
   }
+  lua_settop(state, stackTop);
   return true;
 }

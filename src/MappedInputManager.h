@@ -32,6 +32,11 @@ class MappedInputManager {
     const char* btn4;
   };
 
+  struct ButtonEdges {
+    uint16_t pressed = 0;
+    uint16_t released = 0;
+  };
+
   MappedInputManager(HalGPIO& gpio, const GfxRenderer& renderer) : gpio(gpio), renderer(renderer) {}
 
   void update() const { gpio.update(); }
@@ -65,6 +70,7 @@ class MappedInputManager {
   bool wasMenuGesture() const;
   bool wasAnyPressed() const;
   bool wasAnyReleased() const;
+  ButtonEdges getButtonEdges() const;
   unsigned long getHeldTime() const;
   const GfxRenderer& getRenderer() const { return renderer; }
   Labels mapLabels(const char* back, const char* confirm, const char* previous, const char* next) const;

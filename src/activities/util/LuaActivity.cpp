@@ -18,6 +18,7 @@ void LuaActivity::onEnter() {
   {
     RenderLock lock(*this);
     started = lua.begin(renderer, mappedInput) && lua.runPlugin(pluginName) && lua.callFunction("init");
+    if (started) started = lua.initializeRuntime();
   }
   if (!started) {
     state = State::Error;
@@ -65,36 +66,18 @@ void LuaActivity::loop() {
     return;
   }
 
-  // Poll On The Main Task - the render task can be inside a panel refresh or a download for a
-  // second or more, and input events survive only one poll, so latch them here and let the Lua
-  // call in render() drain them. Notifications coalesce, so a burst of presses costs one repaint.
-  lua.latchInputEvents();
-
-  // Apps poll state inside draw() (waiting on WiFi, timers), so keep ticking when idle rather
-  // than only on input. Notifications are cheap; the app decides whether to repaint the panel.
-  const unsigned long now = millis();
-  if (now - lastTickMs < TICK_INTERVAL_MS) return;
-  lastTickMs = now;
-  requestUpdate(true);
+  if (lua.hasDrawCallback()) lua.latchInputEvents();
+  const bool buttonQueued = lua.enqueueButtonEvents();
+  const bool runtimeQueued = lua.pollRuntime(millis());
+  if (buttonQueued || runtimeQueued) requestUpdate(true);
 }
 
 void LuaActivity::render(RenderLock&&) {
   if (state == State::Running) {
-    // Drain One Event Per draw() - apps read at most one press per call, so a burst needs one
-    // pass each to advance state. Only the final pass is allowed to touch the panel.
-    do {
-      lua.beginInputFrame();
-      lua.setRefreshSuppressed(lua.hasPendingInputEvents());
-      if (!lua.callFunction("draw")) {
-        lua.setRefreshSuppressed(false);
-        lua.dropHeldRefresh();
-        state = State::Error;
-        renderError();
-        return;
-      }
-    } while (lua.hasPendingInputEvents());
-    lua.setRefreshSuppressed(false);
-    lua.flushHeldRefresh(renderer);
+    if (!lua.dispatchPending(renderer)) {
+      state = State::Error;
+      renderError();
+    }
     return;
   }
 

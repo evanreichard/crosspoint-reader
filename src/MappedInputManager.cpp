@@ -325,6 +325,18 @@ bool MappedInputManager::wasAnyPressed() const { return gpio.wasAnyPressed(); }
 
 bool MappedInputManager::wasAnyReleased() const { return gpio.wasAnyReleased(); }
 
+MappedInputManager::ButtonEdges MappedInputManager::getButtonEdges() const {
+  static constexpr Button BUTTONS[] = {Button::Back,  Button::Confirm,  Button::Left,
+                                       Button::Right, Button::PageBack, Button::PageForward};
+  ButtonEdges edges;
+  for (const Button button : BUTTONS) {
+    const uint16_t bit = 1u << static_cast<uint8_t>(button);
+    if (mapButton(button, &HalGPIO::wasPressed)) edges.pressed |= bit;
+    if (mapButton(button, &HalGPIO::wasReleased)) edges.released |= bit;
+  }
+  return edges;
+}
+
 unsigned long MappedInputManager::getHeldTime() const {
   if (!gpio.wasAnyPressed() && !gpio.wasAnyReleased() && touchHeldOverrideValid &&
       millis() - touchHeldOverrideAt <= TOUCH_HELD_OVERRIDE_WINDOW_MS) {
