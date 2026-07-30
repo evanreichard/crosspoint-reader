@@ -36,20 +36,23 @@ gui.HINT_OK = "o"
 gui.HINT_PREV = "<"
 gui.HINT_NEXT = ">"
 
+---@class http
+http = {}
+
 ---@class input
 input = {}
 
 ---@class log
 log = {}
 
----@class net
-net = {}
-
 ---@class sys
 sys = {}
 
 ---@class timer
 timer = {}
+
+---@class wifi
+wifi = {}
 
 ---@type integer
 COLOR_BLACK = 0
@@ -295,6 +298,58 @@ function gui.setOrientation(mode) end
 ---@return integer
 function gui.width() end
 
+-- http
+
+--- Performs an HTTP DELETE request.
+---@param url string
+---@param headers? table<string,string> Optional request headers
+---@return string? body Nil on failure
+---@return integer status HTTP status code, or -1 if the request never happened
+function http.delete(url, headers) end
+
+--- Downloads an HTTPS URL to a file with optional integrity checks.
+---@param url string HTTPS URL
+---@param destination string Absolute destination path on the SD card
+---@param options table { maxBytes: int (required, up to 16MB), expectedSize?: int, sha256?: string (64 hex chars) }
+---@return integer? bytesWritten Nil on failure
+---@return string? error Present when the download fails
+function http.download(url, destination, options) end
+
+--- Performs an HTTP GET request.
+---@param url string
+---@param headers? table<string,string> Optional request headers
+---@return string? body Nil on failure (capped at ~50KB)
+---@return integer status HTTP status code, or -1 if the request never happened
+function http.get(url, headers) end
+
+--- Performs an HTTP HEAD request.
+---@param url string
+---@param headers? table<string,string> Optional request headers
+---@return string? body Nil on failure
+---@return integer status HTTP status code, or -1 if the request never happened
+function http.head(url, headers) end
+
+--- Performs an HTTP PATCH request.
+---@param url string
+---@param body? string Request body (default "")
+---@param headers? table<string,string> Optional request headers
+---@return string? body Nil on failure (capped at ~50KB)
+---@return integer status HTTP status code, or -1 if the request never happened
+function http.patch(url, body, headers) end
+
+--- Performs an HTTP POST request.
+---@param url string
+---@param body? string Request body (default "")
+---@param headers? table<string,string> Optional request headers
+---@return string? body Nil on failure (capped at ~50KB)
+---@return integer status HTTP status code, or -1 if the request never happened
+function http.post(url, body, headers) end
+
+--- Percent-encodes a string for use in a URL query.
+---@param input string
+---@return string encoded
+function http.urlencode(input) end
+
 -- input
 
 --- Returns true while any button is currently held down.
@@ -330,68 +385,6 @@ function log.error(message) end
 ---@param message string
 function log.info(message) end
 
--- net
-
---- Performs an HTTP DELETE request.
----@param url string
----@param headers? table<string,string> Optional request headers
----@return string? body Nil on failure
----@return integer status HTTP status code, or -1 if the request never happened
-function net.delete(url, headers) end
-
---- Downloads an HTTPS URL to a file with optional integrity checks.
----@param url string HTTPS URL
----@param destination string Absolute destination path on the SD card
----@param options table { maxBytes: int (required, up to 16MB), expectedSize?: int, sha256?: string (64 hex chars) }
----@return integer? bytesWritten Nil on failure
----@return string? error Present when the download fails
-function net.download(url, destination, options) end
-
---- Performs an HTTP GET request.
----@param url string
----@param headers? table<string,string> Optional request headers
----@return string? body Nil on failure (capped at ~50KB)
----@return integer status HTTP status code, or -1 if the request never happened
-function net.get(url, headers) end
-
---- Performs an HTTP HEAD request.
----@param url string
----@param headers? table<string,string> Optional request headers
----@return string? body Nil on failure
----@return integer status HTTP status code, or -1 if the request never happened
-function net.head(url, headers) end
-
---- Performs an HTTP PATCH request.
----@param url string
----@param body? string Request body (default "")
----@param headers? table<string,string> Optional request headers
----@return string? body Nil on failure (capped at ~50KB)
----@return integer status HTTP status code, or -1 if the request never happened
-function net.patch(url, body, headers) end
-
---- Performs an HTTP POST request.
----@param url string
----@param body? string Request body (default "")
----@param headers? table<string,string> Optional request headers
----@return string? body Nil on failure (capped at ~50KB)
----@return integer status HTTP status code, or -1 if the request never happened
-function net.post(url, body, headers) end
-
---- Percent-encodes a string for use in a URL query.
----@param input string
----@return string encoded
-function net.urlencode(input) end
-
---- Starts connecting to a stored Wi-Fi network (credentials from the reader settings). Poll net.wifiStatus().
-function net.wifiConnect() end
-
---- Disconnects Wi-Fi if the app started it.
-function net.wifiDisconnect() end
-
---- Returns the Wi-Fi connection state, advancing any in-progress attempt.
----@return string status "idle" | "connecting" | "connected" | "failed"
-function net.wifiStatus() end
-
 -- sys
 
 --- Blocks the app for the given number of milliseconds.
@@ -424,5 +417,25 @@ function timer.cancel(id) end
 ---@param intervalMs integer 100-3600000
 ---@param id string 1-31 letters, digits, underscores, or dashes
 function timer.every(intervalMs, id) end
+
+-- wifi
+
+--- Starts connecting to a stored Wi-Fi network (credentials from the reader settings). Poll wifi.status().
+function wifi.connect() end
+
+--- Disconnects Wi-Fi if the app started it.
+function wifi.disconnect() end
+
+--- Returns whether Wi-Fi is currently connected to an access point.
+---@return boolean connected
+function wifi.isConnected() end
+
+--- Returns the local IP address of the Wi-Fi interface.
+---@return string ip "0.0.0.0" if not connected
+function wifi.localIP() end
+
+--- Returns the Wi-Fi connection state, advancing any in-progress attempt.
+---@return string status "idle" | "connecting" | "connected" | "failed"
+function wifi.status() end
 
 -- Callbacks a runtime app may define: draw(), on_tick(), on_button(name, state), on_timer(id).

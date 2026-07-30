@@ -859,8 +859,8 @@ void startWifiCredential(size_t index) {
   LOG_INF("LUA", "Connecting WiFi: %s", credential.ssid.c_str());
 }
 
-// --- Starts connecting to a stored Wi-Fi network (credentials from the reader settings). Poll net.wifiStatus().
-// -- @within net
+// --- Starts connecting to a stored Wi-Fi network (credentials from the reader settings). Poll wifi.status().
+// -- @within wifi
 int netWifiConnect(lua_State*) {
   WIFI_STORE.loadFromFile();
   const auto& credentials = WIFI_STORE.getCredentials();
@@ -885,7 +885,7 @@ int netWifiConnect(lua_State*) {
 
 // --- Returns the Wi-Fi connection state, advancing any in-progress attempt.
 // -- @return string status "idle" | "connecting" | "connected" | "failed"
-// -- @within net
+// -- @within wifi
 int netWifiStatus(lua_State* state) {
   if (wifiState == WifiState::Connecting) {
     const wl_status_t status = WiFi.status();
@@ -906,7 +906,7 @@ int netWifiStatus(lua_State* state) {
 }
 
 // --- Disconnects Wi-Fi if the app started it.
-// -- @within net
+// -- @within wifi
 int netWifiDisconnect(lua_State*) {
   if (ownsWifi) {
     WiFi.disconnect(false);
@@ -915,6 +915,22 @@ int netWifiDisconnect(lua_State*) {
   }
   wifiState = WifiState::Idle;
   return 0;
+}
+
+// --- Returns whether Wi-Fi is currently connected to an access point.
+// -- @return bool connected
+// -- @within wifi
+int netWifiIsConnected(lua_State* state) {
+  lua_pushboolean(state, WiFi.status() == WL_CONNECTED);
+  return 1;
+}
+
+// --- Returns the local IP address of the Wi-Fi interface.
+// -- @return string ip "0.0.0.0" if not connected
+// -- @within wifi
+int netWifiLocalIp(lua_State* state) {
+  lua_pushstring(state, WiFi.localIP().toString().c_str());
+  return 1;
 }
 
 // Empirical floors, not measured peaks: downloads are observed working at 31 KB free, and the
@@ -1050,21 +1066,21 @@ int netRequest(lua_State* state, const char* method, bool bodyExpected) {
 // -- @param headers[opt] table<string,string> Optional request headers
 // -- @return string|nil body Nil on failure (capped at ~50KB)
 // -- @return int status HTTP status code, or -1 if the request never happened
-// -- @within net
+// -- @within http
 int netGet(lua_State* state) { return netRequest(state, "GET", false); }
 // --- Performs an HTTP HEAD request.
 // -- @param url string
 // -- @param headers[opt] table<string,string> Optional request headers
 // -- @return string|nil body Nil on failure
 // -- @return int status HTTP status code, or -1 if the request never happened
-// -- @within net
+// -- @within http
 int netHead(lua_State* state) { return netRequest(state, "HEAD", false); }
 // --- Performs an HTTP DELETE request.
 // -- @param url string
 // -- @param headers[opt] table<string,string> Optional request headers
 // -- @return string|nil body Nil on failure
 // -- @return int status HTTP status code, or -1 if the request never happened
-// -- @within net
+// -- @within http
 int netDelete(lua_State* state) { return netRequest(state, "DELETE", false); }
 // --- Performs an HTTP POST request.
 // -- @param url string
@@ -1072,7 +1088,7 @@ int netDelete(lua_State* state) { return netRequest(state, "DELETE", false); }
 // -- @param headers[opt] table<string,string> Optional request headers
 // -- @return string|nil body Nil on failure (capped at ~50KB)
 // -- @return int status HTTP status code, or -1 if the request never happened
-// -- @within net
+// -- @within http
 int netPost(lua_State* state) { return netRequest(state, "POST", true); }
 // --- Performs an HTTP PATCH request.
 // -- @param url string
@@ -1080,7 +1096,7 @@ int netPost(lua_State* state) { return netRequest(state, "POST", true); }
 // -- @param headers[opt] table<string,string> Optional request headers
 // -- @return string|nil body Nil on failure (capped at ~50KB)
 // -- @return int status HTTP status code, or -1 if the request never happened
-// -- @within net
+// -- @within http
 int netPatch(lua_State* state) { return netRequest(state, "PATCH", true); }
 
 int pushLuaError(lua_State* state, const char* error) {
@@ -1135,7 +1151,7 @@ const char* downloadErrorMessage(HttpDownloader::DownloadError error) {
 // -- @param options table { maxBytes: int (required, up to 16MB), expectedSize?: int, sha256?: string (64 hex chars) }
 // -- @return int|nil bytesWritten Nil on failure
 // -- @return string|nil error Present when the download fails
-// -- @within net
+// -- @within http
 int netDownload(lua_State* state) {
   const char* url = luaL_checkstring(state, 1);
   const char* destination = luaL_checkstring(state, 2);
@@ -1207,7 +1223,7 @@ int netDownload(lua_State* state) {
 // --- Percent-encodes a string for use in a URL query.
 // -- @param input string
 // -- @return string encoded
-// -- @within net
+// -- @within http
 int netUrlEncode(lua_State* state) {
   size_t size = 0;
   const auto* input = reinterpret_cast<const unsigned char*>(luaL_checklstring(state, 1, &size));
@@ -1720,9 +1736,14 @@ void LuaManager::registerBindings() {
   lua_setglobal(state, "fs");
 
   lua_newtable(state);
-  addFunction(state, "wifiConnect", netWifiConnect);
-  addFunction(state, "wifiStatus", netWifiStatus);
-  addFunction(state, "wifiDisconnect", netWifiDisconnect);
+  addFunction(state, "connect", netWifiConnect);
+  addFunction(state, "status", netWifiStatus);
+  addFunction(state, "disconnect", netWifiDisconnect);
+  addFunction(state, "isConnected", netWifiIsConnected);
+  addFunction(state, "localIP", netWifiLocalIp);
+  lua_setglobal(state, "wifi");
+
+  lua_newtable(state);
   addFunction(state, "get", netGet);
   addFunction(state, "head", netHead);
   addFunction(state, "delete", netDelete);
@@ -1730,7 +1751,7 @@ void LuaManager::registerBindings() {
   addFunction(state, "patch", netPatch);
   addFunction(state, "download", netDownload);
   addFunction(state, "urlencode", netUrlEncode);
-  lua_setglobal(state, "net");
+  lua_setglobal(state, "http");
 
   lua_pushinteger(state, HalDisplay::FULL_REFRESH);
   lua_setglobal(state, "REFRESH_FULL");
