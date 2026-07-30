@@ -67,14 +67,18 @@
         {
           default = pkgs.mkShell {
             packages = with pkgs; [
+              uv
               pio
               fhsEnv
               clang-tools # for clang-format
-              (python3.withPackages (ps: with ps; [ # for debugging monitor
-                matplotlib
-                pyserial
-                colorama
-              ]))
+              (python3.withPackages (
+                ps: with ps; [
+                  # for debugging monitor
+                  matplotlib
+                  pyserial
+                  colorama
+                ]
+              ))
             ];
 
             shellHook = setEnvs;

@@ -92,16 +92,25 @@ Color getColor(lua_State* state, int index, Color fallback = Color::Black) {
 
 bool isBlack(Color color) { return color != Color::White && color != Color::Clear; }
 
+// --- Logs a debug message to serial output.
+// -- @param message string
+// -- @within log
 int luaLogDebug(lua_State* state) {
   LOG_DBG("LUA", "%s", luaL_checkstring(state, 1));
   return 0;
 }
 
+// --- Logs an info message to serial output.
+// -- @param message string
+// -- @within log
 int luaLogInfo(lua_State* state) {
   LOG_INF("LUA", "%s", luaL_checkstring(state, 1));
   return 0;
 }
 
+// --- Logs an error message to serial output.
+// -- @param message string
+// -- @within log
 int luaLogError(lua_State* state) {
   LOG_ERR("LUA", "%s", luaL_checkstring(state, 1));
   return 0;
@@ -112,11 +121,16 @@ int luaLogLegacy(lua_State* state) {
   return 0;
 }
 
+// --- Clears the framebuffer to white.
+// -- @within gui
 int guiClear(lua_State* state) {
   if (auto* renderer = getRenderer(state)) renderer->clearScreen();
   return 0;
 }
 
+// --- Pushes the framebuffer to the panel.
+// -- @param mode[opt=REFRESH_FAST] int REFRESH_* constant
+// -- @within gui
 int guiRefresh(lua_State* state) {
   const int mode = luaL_optinteger(state, 1, HalDisplay::FAST_REFRESH);
   auto* manager = getManager(state);
@@ -131,6 +145,13 @@ int guiRefresh(lua_State* state) {
   return 0;
 }
 
+// --- Draws an unfilled rectangle.
+// -- @param x int Left edge
+// -- @param y int Top edge
+// -- @param w int Width
+// -- @param h int Height
+// -- @param color[opt=COLOR_BLACK] int COLOR_* constant
+// -- @within gui
 int guiDrawRect(lua_State* state) {
   if (auto* renderer = getRenderer(state)) {
     renderer->drawRect(luaL_checkinteger(state, 1), luaL_checkinteger(state, 2), luaL_checkinteger(state, 3),
@@ -139,6 +160,13 @@ int guiDrawRect(lua_State* state) {
   return 0;
 }
 
+// --- Draws a filled rectangle.
+// -- @param x int Left edge
+// -- @param y int Top edge
+// -- @param w int Width
+// -- @param h int Height
+// -- @param color[opt=COLOR_BLACK] int COLOR_* constant
+// -- @within gui
 int guiFillRect(lua_State* state) {
   if (auto* renderer = getRenderer(state)) {
     renderer->fillRect(luaL_checkinteger(state, 1), luaL_checkinteger(state, 2), luaL_checkinteger(state, 3),
@@ -147,6 +175,14 @@ int guiFillRect(lua_State* state) {
   return 0;
 }
 
+// --- Draws a line.
+// -- @param x1 int Start X
+// -- @param y1 int Start Y
+// -- @param x2 int End X
+// -- @param y2 int End Y
+// -- @param width[opt=1] int Stroke width
+// -- @param color[opt=COLOR_BLACK] int COLOR_* constant
+// -- @within gui
 int guiDrawLine(lua_State* state) {
   if (auto* renderer = getRenderer(state)) {
     renderer->drawLine(luaL_checkinteger(state, 1), luaL_checkinteger(state, 2), luaL_checkinteger(state, 3),
@@ -155,6 +191,15 @@ int guiDrawLine(lua_State* state) {
   return 0;
 }
 
+// --- Draws an unfilled rounded rectangle.
+// -- @param x int Left edge
+// -- @param y int Top edge
+// -- @param w int Width
+// -- @param h int Height
+// -- @param width[opt=2] int Stroke width
+// -- @param radius[opt=10] int Corner radius
+// -- @param color[opt=COLOR_BLACK] int COLOR_* constant
+// -- @within gui
 int guiDrawRoundedRect(lua_State* state) {
   if (auto* renderer = getRenderer(state)) {
     renderer->drawRoundedRect(luaL_checkinteger(state, 1), luaL_checkinteger(state, 2), luaL_checkinteger(state, 3),
@@ -164,6 +209,14 @@ int guiDrawRoundedRect(lua_State* state) {
   return 0;
 }
 
+// --- Draws a filled rounded rectangle.
+// -- @param x int Left edge
+// -- @param y int Top edge
+// -- @param w int Width
+// -- @param h int Height
+// -- @param radius[opt=10] int Corner radius
+// -- @param color[opt=COLOR_BLACK] int COLOR_* constant (supports gray values)
+// -- @within gui
 int guiFillRoundedRect(lua_State* state) {
   if (auto* renderer = getRenderer(state)) {
     renderer->fillRoundedRect(luaL_checkinteger(state, 1), luaL_checkinteger(state, 2), luaL_checkinteger(state, 3),
@@ -172,6 +225,11 @@ int guiFillRoundedRect(lua_State* state) {
   return 0;
 }
 
+// --- Draws a single pixel.
+// -- @param x int
+// -- @param y int
+// -- @param color[opt=COLOR_BLACK] int COLOR_* constant
+// -- @within gui
 int guiDrawPixel(lua_State* state) {
   if (auto* renderer = getRenderer(state)) {
     renderer->drawPixel(luaL_checkinteger(state, 1), luaL_checkinteger(state, 2), isBlack(getColor(state, 3)));
@@ -204,6 +262,13 @@ void drawCircle(GfxRenderer& renderer, int cx, int cy, int radius, int width, bo
   }
 }
 
+// --- Draws an unfilled circle.
+// -- @param cx int Center X
+// -- @param cy int Center Y
+// -- @param radius int
+// -- @param width[opt=1] int Stroke width
+// -- @param color[opt=COLOR_BLACK] int COLOR_* constant
+// -- @within gui
 int guiDrawCircle(lua_State* state) {
   if (auto* renderer = getRenderer(state)) {
     drawCircle(*renderer, luaL_checkinteger(state, 1), luaL_checkinteger(state, 2), luaL_checkinteger(state, 3),
@@ -212,6 +277,12 @@ int guiDrawCircle(lua_State* state) {
   return 0;
 }
 
+// --- Draws a filled circle.
+// -- @param cx int Center X
+// -- @param cy int Center Y
+// -- @param radius int
+// -- @param color[opt=COLOR_BLACK] int COLOR_* constant
+// -- @within gui
 int guiFillCircle(lua_State* state) {
   if (auto* renderer = getRenderer(state)) {
     const int cx = luaL_checkinteger(state, 1);
@@ -226,6 +297,11 @@ int guiFillCircle(lua_State* state) {
   return 0;
 }
 
+// --- Draws a filled polygon from parallel vertex arrays (needs 3+ points).
+// -- @param xs int[] X coordinates of each vertex
+// -- @param ys int[] Y coordinates of each vertex
+// -- @param color[opt=COLOR_BLACK] int COLOR_* constant
+// -- @within gui
 int guiFillPolygon(lua_State* state) {
   auto* renderer = getRenderer(state);
   if (!renderer) return 0;
@@ -251,6 +327,14 @@ int guiFillPolygon(lua_State* state) {
   return 0;
 }
 
+// --- Draws text at a position.
+// -- @param font int FONT_* constant
+// -- @param x int Left edge
+// -- @param y int Baseline Y
+// -- @param text string
+// -- @param color[opt=COLOR_BLACK] int COLOR_* constant
+// -- @param style[opt=STYLE_REGULAR] int STYLE_* constant
+// -- @within gui
 int guiDrawText(lua_State* state) {
   if (auto* renderer = getRenderer(state)) {
     renderer->drawText(luaL_checkinteger(state, 1), luaL_checkinteger(state, 2), luaL_checkinteger(state, 3),
@@ -260,6 +344,13 @@ int guiDrawText(lua_State* state) {
   return 0;
 }
 
+// --- Draws text centered horizontally on the screen.
+// -- @param font int FONT_* constant
+// -- @param y int Baseline Y
+// -- @param text string
+// -- @param color[opt=COLOR_BLACK] int COLOR_* constant
+// -- @param style[opt=STYLE_REGULAR] int STYLE_* constant
+// -- @within gui
 int guiDrawCenteredText(lua_State* state) {
   if (auto* renderer = getRenderer(state)) {
     renderer->drawCenteredText(luaL_checkinteger(state, 1), luaL_checkinteger(state, 2), luaL_checkstring(state, 3),
@@ -269,6 +360,12 @@ int guiDrawCenteredText(lua_State* state) {
   return 0;
 }
 
+// --- Returns the rendered width of a string in pixels.
+// -- @param font int FONT_* constant
+// -- @param text string
+// -- @param style[opt=STYLE_REGULAR] int STYLE_* constant
+// -- @return int width
+// -- @within gui
 int guiGetTextWidth(lua_State* state) {
   auto* renderer = getRenderer(state);
   lua_pushinteger(state, renderer ? renderer->getTextWidth(luaL_checkinteger(state, 1), luaL_checkstring(state, 2),
@@ -278,18 +375,30 @@ int guiGetTextWidth(lua_State* state) {
   return 1;
 }
 
+// --- Returns the screen width in pixels for the current orientation.
+// -- @return int
+// -- @within gui
 int guiWidth(lua_State* state) {
   auto* renderer = getRenderer(state);
   lua_pushinteger(state, renderer ? renderer->getScreenWidth() : 0);
   return 1;
 }
 
+// --- Returns the screen height in pixels for the current orientation.
+// -- @return int
+// -- @within gui
 int guiHeight(lua_State* state) {
   auto* renderer = getRenderer(state);
   lua_pushinteger(state, renderer ? renderer->getScreenHeight() : 0);
   return 1;
 }
 
+// --- Draws the standard four-button hint bar (use gui.HINT_* for arrow glyphs).
+// -- @param btn1[opt] string Back button label (default "")
+// -- @param btn2[opt] string Confirm button label (default "")
+// -- @param btn3[opt] string Left button label (default "")
+// -- @param btn4[opt] string Right button label (default "")
+// -- @within gui
 int guiDrawButtonHints(lua_State* state) {
   auto* renderer = getRenderer(state);
   auto* input = getInput(state);
@@ -300,6 +409,9 @@ int guiDrawButtonHints(lua_State* state) {
   return 0;
 }
 
+// --- Changes the screen orientation (invalidates any layout assumptions).
+// -- @param mode string "portrait" | "portrait_inv" | "landscape_cw" | "landscape_ccw"
+// -- @within gui
 int guiSetOrientation(lua_State* state) {
   auto* renderer = getRenderer(state);
   if (!renderer) return 0;
@@ -312,6 +424,14 @@ int guiSetOrientation(lua_State* state) {
   return 0;
 }
 
+// --- Draws a BMP file from the SD card, centered by default.
+// -- @param path string Absolute path on the SD card
+// -- @param x[opt=centered] int Left edge
+// -- @param y[opt=centered] int Top edge
+// -- @param maxWidth[opt=screen] int Bounds the image is scaled into
+// -- @param maxHeight[opt=screen] int Bounds the image is scaled into
+// -- @return bool ok False if the file is missing or not a valid BMP
+// -- @within gui
 int guiDrawBmp(lua_State* state) {
   auto* renderer = getRenderer(state);
   if (!renderer) {
@@ -337,6 +457,10 @@ int guiDrawBmp(lua_State* state) {
   return 1;
 }
 
+// --- Returns true if the button was pressed since the last input frame. Buttons: "back", "confirm", "left", "right", "up", "down", "page_back", "page_forward".
+// -- @param button string Button name
+// -- @return bool
+// -- @within input
 int inputWasPressed(lua_State* state) {
   auto* manager = getManager(state);
   lua_pushboolean(state,
@@ -344,6 +468,10 @@ int inputWasPressed(lua_State* state) {
   return 1;
 }
 
+// --- Returns true if the button was released since the last input frame.
+// -- @param button string Button name
+// -- @return bool
+// -- @within input
 int inputWasReleased(lua_State* state) {
   auto* manager = getManager(state);
   lua_pushboolean(state,
@@ -351,6 +479,10 @@ int inputWasReleased(lua_State* state) {
   return 1;
 }
 
+// --- Returns true while the button is currently held down.
+// -- @param button string Button name
+// -- @return bool
+// -- @within input
 int inputIsPressed(lua_State* state) {
   auto* manager = getManager(state);
   lua_pushboolean(state,
@@ -358,27 +490,42 @@ int inputIsPressed(lua_State* state) {
   return 1;
 }
 
+// --- Returns true while any button is currently held down.
+// -- @return bool
+// -- @within input
 int inputIsAnyPressed(lua_State* state) {
   auto* manager = getManager(state);
   lua_pushboolean(state, manager && manager->isAnyLatchedPressed());
   return 1;
 }
 
+// --- Returns milliseconds since boot.
+// -- @return int
+// -- @within sys
+// -- @alias uptime
 int sysMillis(lua_State* state) {
   lua_pushinteger(state, static_cast<lua_Integer>(millis()));
   return 1;
 }
 
+// --- Blocks the app for the given number of milliseconds.
+// -- @param ms int
+// -- @within sys
 int sysDelay(lua_State* state) {
   delay(luaL_checkinteger(state, 1));
   return 0;
 }
 
+// --- Requests the app to exit back to the launcher.
+// -- @within sys
 int sysExit(lua_State* state) {
   if (auto* manager = getManager(state)) manager->requestExit();
   return 0;
 }
 
+// --- Enables the on_tick() callback at a fixed interval (0 disables, minimum 33ms). Requires on_tick() to be defined.
+// -- @param intervalMs int 0-3600000
+// -- @within app
 int appSetTickInterval(lua_State* state) {
   const lua_Integer requested = luaL_checkinteger(state, 1);
   luaL_argcheck(state, requested >= 0 && requested <= MAX_RUNTIME_INTERVAL_MS, 1, "interval must be 0-3600000ms");
@@ -411,10 +558,21 @@ int addTimer(lua_State* state, bool repeating) {
   return 0;
 }
 
+// --- Fires on_timer(id) once after the interval. Apps define on_timer(id) to receive it.
+// -- @param intervalMs int 100-3600000
+// -- @param id string 1-31 letters, digits, underscores, or dashes
+// -- @within timer
 int timerAfter(lua_State* state) { return addTimer(state, false); }
 
+// --- Fires on_timer(id) repeatedly at the interval until cancelled.
+// -- @param intervalMs int 100-3600000
+// -- @param id string 1-31 letters, digits, underscores, or dashes
+// -- @within timer
 int timerEvery(lua_State* state) { return addTimer(state, true); }
 
+// --- Cancels a timer by id.
+// -- @param id string
+// -- @within timer
 int timerCancel(lua_State* state) {
   size_t idLength = 0;
   const char* id = luaL_checklstring(state, 1, &idLength);
@@ -450,14 +608,30 @@ int pushEntries(lua_State* state, bool directories) {
   return 1;
 }
 
+// --- Lists sorted sub-directory names under a path (hidden entries excluded).
+// -- @param path string Absolute path on the SD card
+// -- @return string[] names
+// -- @within fs
 int fsListDirs(lua_State* state) { return pushEntries(state, true); }
+// --- Lists sorted file names under a path (hidden entries excluded).
+// -- @param path string Absolute path on the SD card
+// -- @return string[] names
+// -- @within fs
 int fsListFiles(lua_State* state) { return pushEntries(state, false); }
 
+// --- Returns true if a file or directory exists.
+// -- @param path string Absolute path on the SD card
+// -- @return bool
+// -- @within fs
 int fsExists(lua_State* state) {
   lua_pushboolean(state, Storage.exists(luaL_checkstring(state, 1)));
   return 1;
 }
 
+// --- Reads an entire file (capped at ~50KB).
+// -- @param path string Absolute path on the SD card
+// -- @return string|nil content Nil if the file is missing or unreadable
+// -- @within fs
 int fsReadFile(lua_State* state) {
   HalFile file;
   if (!Storage.openFileForRead("LUA", luaL_checkstring(state, 1), file) || file.isDirectory()) {
@@ -488,6 +662,10 @@ int fsReadFile(lua_State* state) {
   return 1;
 }
 
+// --- Returns the size of a file in bytes.
+// -- @param path string Absolute path on the SD card
+// -- @return int|nil size Nil if the file is missing or a directory
+// -- @within fs
 int fsFileSize(lua_State* state) {
   HalFile file;
   if (!Storage.openFileForRead("LUA", luaL_checkstring(state, 1), file) || file.isDirectory()) {
@@ -498,6 +676,12 @@ int fsFileSize(lua_State* state) {
   return 1;
 }
 
+// --- Reads the first full line beginning at or after a byte offset, for paging large files.
+// -- @param path string Absolute path on the SD card
+// -- @param offset int Byte offset (0-based); snaps forward to the next line boundary if mid-line
+// -- @return string|nil line Nil past end of file, or if the line exceeds 192 bytes
+// -- @return int|nil nextOffset Byte offset of the following line
+// -- @within fs
 int fsReadLineAt(lua_State* state) {
   const char* path = luaL_checkstring(state, 1);
   const lua_Integer requestedOffset = luaL_checkinteger(state, 2);
@@ -592,6 +776,11 @@ int pushFsResult(lua_State* state, bool ok, const char* error) {
   return 2;
 }
 
+// --- Creates a directory.
+// -- @param path string Absolute path on the SD card
+// -- @return bool|nil ok
+// -- @return string|nil error Present when ok is nil
+// -- @within fs
 int fsMkdir(lua_State* state) {
   const char* path = luaL_checkstring(state, 1);
   if (!isSafeMutationPath(path, true)) return pushFsResult(state, false, "Unsafe directory path");
@@ -602,6 +791,12 @@ int fsMkdir(lua_State* state) {
   return pushFsResult(state, Storage.mkdir(path), "Failed to create directory");
 }
 
+// --- Renames (moves) a file or directory.
+// -- @param source string
+// -- @param destination string Must not already exist
+// -- @return bool|nil ok
+// -- @return string|nil error Present when ok is nil
+// -- @within fs
 int fsRename(lua_State* state) {
   const char* source = luaL_checkstring(state, 1);
   const char* destination = luaL_checkstring(state, 2);
@@ -612,18 +807,33 @@ int fsRename(lua_State* state) {
   return pushFsResult(state, Storage.rename(source, destination), "Failed to rename path");
 }
 
+// --- Deletes a file. /.apps and /.crosspoint are protected.
+// -- @param path string Absolute path on the SD card
+// -- @return bool|nil ok
+// -- @return string|nil error Present when ok is nil
+// -- @within fs
 int fsRemove(lua_State* state) {
   const char* path = luaL_checkstring(state, 1);
   if (!isSafeMutationPath(path)) return pushFsResult(state, false, "Unsafe remove path");
   return pushFsResult(state, Storage.remove(path), "Failed to remove file");
 }
 
+// --- Recursively deletes a directory tree. /.apps and /.crosspoint are protected.
+// -- @param path string Absolute path on the SD card
+// -- @return bool|nil ok
+// -- @return string|nil error Present when ok is nil
+// -- @within fs
 int fsRemoveTree(lua_State* state) {
   const char* path = luaL_checkstring(state, 1);
   if (!isSafeMutationPath(path)) return pushFsResult(state, false, "Unsafe remove tree path");
   return pushFsResult(state, Storage.removeDir(path), "Failed to remove directory tree");
 }
 
+// --- Writes a file (creating or overwriting).
+// -- @param path string Absolute path on the SD card
+// -- @param content string
+// -- @return bool ok
+// -- @within fs
 int fsWriteFile(lua_State* state) {
   const char* path = luaL_checkstring(state, 1);
   size_t size = 0;
@@ -649,6 +859,8 @@ void startWifiCredential(size_t index) {
   LOG_INF("LUA", "Connecting WiFi: %s", credential.ssid.c_str());
 }
 
+// --- Starts connecting to a stored Wi-Fi network (credentials from the reader settings). Poll net.wifiStatus().
+// -- @within net
 int netWifiConnect(lua_State*) {
   WIFI_STORE.loadFromFile();
   const auto& credentials = WIFI_STORE.getCredentials();
@@ -671,6 +883,9 @@ int netWifiConnect(lua_State*) {
   return 0;
 }
 
+// --- Returns the Wi-Fi connection state, advancing any in-progress attempt.
+// -- @return string status "idle" | "connecting" | "connected" | "failed"
+// -- @within net
 int netWifiStatus(lua_State* state) {
   if (wifiState == WifiState::Connecting) {
     const wl_status_t status = WiFi.status();
@@ -690,6 +905,8 @@ int netWifiStatus(lua_State* state) {
   return 1;
 }
 
+// --- Disconnects Wi-Fi if the app started it.
+// -- @within net
 int netWifiDisconnect(lua_State*) {
   if (ownsWifi) {
     WiFi.disconnect(false);
@@ -828,10 +1045,42 @@ int netRequest(lua_State* state, const char* method, bool bodyExpected) {
   return 2;
 }
 
+// --- Performs an HTTP GET request.
+// -- @param url string
+// -- @param headers[opt] table<string,string> Optional request headers
+// -- @return string|nil body Nil on failure (capped at ~50KB)
+// -- @return int status HTTP status code, or -1 if the request never happened
+// -- @within net
 int netGet(lua_State* state) { return netRequest(state, "GET", false); }
+// --- Performs an HTTP HEAD request.
+// -- @param url string
+// -- @param headers[opt] table<string,string> Optional request headers
+// -- @return string|nil body Nil on failure
+// -- @return int status HTTP status code, or -1 if the request never happened
+// -- @within net
 int netHead(lua_State* state) { return netRequest(state, "HEAD", false); }
+// --- Performs an HTTP DELETE request.
+// -- @param url string
+// -- @param headers[opt] table<string,string> Optional request headers
+// -- @return string|nil body Nil on failure
+// -- @return int status HTTP status code, or -1 if the request never happened
+// -- @within net
 int netDelete(lua_State* state) { return netRequest(state, "DELETE", false); }
+// --- Performs an HTTP POST request.
+// -- @param url string
+// -- @param body[opt] string Request body (default "")
+// -- @param headers[opt] table<string,string> Optional request headers
+// -- @return string|nil body Nil on failure (capped at ~50KB)
+// -- @return int status HTTP status code, or -1 if the request never happened
+// -- @within net
 int netPost(lua_State* state) { return netRequest(state, "POST", true); }
+// --- Performs an HTTP PATCH request.
+// -- @param url string
+// -- @param body[opt] string Request body (default "")
+// -- @param headers[opt] table<string,string> Optional request headers
+// -- @return string|nil body Nil on failure (capped at ~50KB)
+// -- @return int status HTTP status code, or -1 if the request never happened
+// -- @within net
 int netPatch(lua_State* state) { return netRequest(state, "PATCH", true); }
 
 int pushLuaError(lua_State* state, const char* error) {
@@ -880,6 +1129,13 @@ const char* downloadErrorMessage(HttpDownloader::DownloadError error) {
   return "Download failed";
 }
 
+// --- Downloads an HTTPS URL to a file with optional integrity checks.
+// -- @param url string HTTPS URL
+// -- @param destination string Absolute destination path on the SD card
+// -- @param options table { maxBytes: int (required, up to 16MB), expectedSize?: int, sha256?: string (64 hex chars) }
+// -- @return int|nil bytesWritten Nil on failure
+// -- @return string|nil error Present when the download fails
+// -- @within net
 int netDownload(lua_State* state) {
   const char* url = luaL_checkstring(state, 1);
   const char* destination = luaL_checkstring(state, 2);
@@ -948,6 +1204,10 @@ int netDownload(lua_State* state) {
   return 1;
 }
 
+// --- Percent-encodes a string for use in a URL query.
+// -- @param input string
+// -- @return string encoded
+// -- @within net
 int netUrlEncode(lua_State* state) {
   size_t size = 0;
   const auto* input = reinterpret_cast<const unsigned char*>(luaL_checklstring(state, 1, &size));
