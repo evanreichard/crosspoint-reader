@@ -60,8 +60,12 @@
               fi
             '';
           };
+          # Hyprland's setuid wrapper (cap_setpcap,cap_sys_nice=ep) leaks
+          # CAP_SYS_NICE into the ambient set of the whole session, which
+          # bwrap 0.11 refuses to run under. Scrub it before entering the FHS env.
           pio = pkgs.writeShellScriptBin "pio" ''
-            exec ${fhsEnv}/bin/crosspoint-reader-shell -c 'exec pio "$@"' pio "$@"
+            exec ${pkgs.libcap}/bin/capsh --noamb -- \
+              ${fhsEnv}/bin/crosspoint-reader-shell -c 'exec pio "$@"' pio "$@"
           '';
         in
         {
