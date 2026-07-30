@@ -1296,8 +1296,6 @@ bool LuaManager::begin(GfxRenderer& renderer, MappedInputManager& input) {
     LOG_ERR("LUA", "%s", lastError);
     return false;
   }
-  luaL_openlibs(state);
-
   lua_pushlightuserdata(state, this);
   lua_setfield(state, LUA_REGISTRYINDEX, "manager");
   lua_pushlightuserdata(state, &renderer);
@@ -1305,13 +1303,7 @@ bool LuaManager::begin(GfxRenderer& renderer, MappedInputManager& input) {
   lua_pushlightuserdata(state, &input);
   lua_setfield(state, LUA_REGISTRYINDEX, "input");
 
-  registerBindings();
-  lua_getglobal(state, "math");
-  lua_getfield(state, -1, "randomseed");
-  lua_pushinteger(state, static_cast<lua_Integer>(esp_random()));
-  lua_call(state, 1, 0);
-  lua_pop(state, 1);
-  LOG_INF("LUA", "VM ready, heap: %u", ESP.getFreeHeap());
+  LOG_INF("LUA", "VM created, heap: %u", ESP.getFreeHeap());
   return true;
 }
 
@@ -1837,7 +1829,21 @@ bool LuaManager::runPlugin(const std::string& pluginName) {
   int result = lua_load(state, readLuaChunk, reader.get(), chunkName.c_str(), nullptr);
   reader->file.close();
   if (result == LUA_OK) stripChunkDebugInfo();
-  if (result == LUA_OK) result = lua_pcall(state, 0, 0, 0);
+  if (result == LUA_OK) {
+    // Delay Globals Until After Compilation - Bytecode stripping temporarily holds both compiled chunks.
+    luaL_openlibs(state);
+    registerBindings();
+
+    lua_getglobal(state, "math");
+    lua_getfield(state, -1, "randomseed");
+    lua_remove(state, -2);
+    lua_pushinteger(state, static_cast<lua_Integer>(esp_random()));
+    result = lua_pcall(state, 1, 0, 0);
+    if (result == LUA_OK) {
+      LOG_INF("LUA", "Runtime ready, heap: %u", ESP.getFreeHeap());
+      result = lua_pcall(state, 0, 0, 0);
+    }
+  }
   if (result != LUA_OK) {
     setError(lua_tostring(state, -1));
     LOG_ERR("LUA", "%s", lastError);
