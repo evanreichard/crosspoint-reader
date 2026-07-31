@@ -296,6 +296,7 @@ void SettingsActivity::loop() {
   if (hasChangedCategory) {
     selectedSettingIndex = (selectedSettingIndex == 0) ? 0 : 1;
     applyCategorySelection();
+    LOG_DBG("SETTINGS", "Category index: %d", selectedCategoryIndex);
   }
 }
 
