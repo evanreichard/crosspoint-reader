@@ -22,6 +22,9 @@
 ---@class app
 app = {}
 
+---@class ble
+ble = {}
+
 ---@class fs
 fs = {}
 
@@ -100,6 +103,54 @@ STYLE_REGULAR = 0
 --- Enables the on_tick() callback at a fixed interval (0 disables, minimum 33ms). Requires on_tick() to be defined.
 ---@param intervalMs integer 0-3600000
 function app.setTickInterval(intervalMs) end
+
+-- ble
+
+--- Connects to a BLE device by address.
+---@param address string BLE address (e.g. "AA:BB:CC:DD:EE:FF")
+---@return boolean ok
+function ble.connect(address) end
+
+--- Deinitializes the BLE stack, releasing resources.
+function ble.deinit() end
+
+--- Disconnects from the current BLE device.
+function ble.disconnect() end
+
+--- Initializes the BLE stack. Call before any other BLE operation.
+---@param name? string Local device name (default "CrossPoint")
+---@return boolean ok
+function ble.init(name) end
+
+--- Returns whether connected to a BLE device.
+---@return boolean connected
+function ble.isConnected() end
+
+--- Reads a BLE characteristic value.
+---@param serviceUUID string Service UUID (e.g. "0000180f-0000-1000-8000-00805f9b34fb")
+---@param charUUID string Characteristic UUID
+---@return string? value Characteristic value as string, nil on failure
+function ble.read(serviceUUID, charUUID) end
+
+--- Scans for BLE devices and returns a table of results.
+---@param duration? integer Scan duration in milliseconds (default 3000)
+---@return table results Array of { name: string, address: string, rssi: int }
+function ble.scan(duration) end
+
+--- Starts advertising this device as a BLE peripheral.
+---@param name? string Advertised name (default "CrossPoint")
+---@return boolean ok
+function ble.startAdvertising(name) end
+
+--- Stops BLE advertising.
+function ble.stopAdvertising() end
+
+--- Writes a value to a BLE characteristic.
+---@param serviceUUID string Service UUID
+---@param charUUID string Characteristic UUID
+---@param value string Value to write
+---@return boolean ok
+function ble.write(serviceUUID, charUUID, value) end
 
 -- fs
 
