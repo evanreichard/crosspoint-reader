@@ -5,18 +5,18 @@ description: "Build and test CrossPoint firmware in the native Xteink emulator. 
 
 # Test CrossPoint Firmware
 
-Build the firmware, then drive it with `xteink-emu`. Prefer observable firmware logs over sleeps or guessed render times. If a meaningful state has no stable log, add a concise semantic firmware log rather than introducing a delay.
+Build the firmware, then drive it with `esp-emu --board xteink`. Prefer observable firmware logs over sleeps or guessed render times. If a meaningful state has no stable log, add a concise semantic firmware log rather than introducing a delay.
 
 ## Prerequisite
 
 Before building or testing, verify the global tool is available:
 
 ```sh
-command -v xteink-emu
-xteink-emu --help >/dev/null
+command -v esp-emu
+esp-emu --board xteink --help >/dev/null
 ```
 
-Stop if either command fails. Tell the user to install `xteink-emu` from [qemu-xteink](https://gitea.va.reichard.io/evan/qemu-xteink.git) before continuing; installation is the user's responsibility.
+Stop if either command fails. Tell the user to install `esp-emu` from [qemu-esp-boards](https://gitea.va.reichard.io/evan/qemu-esp-boards.git) (`nix run .#esp-emu`, or `uv tool install -e tools/esp-emu-cli`) before continuing; installation is the user's responsibility.
 
 ## Build
 
@@ -24,14 +24,14 @@ Stop if either command fails. Tell the user to install `xteink-emu` from [qemu-x
 pio run -e default
 ```
 
-The firmware is `.pio/build/default/firmware.bin`. The emulator builds native QEMU on first boot and stores state under `/tmp/xteink-emu-$UID` by default.
+The firmware is `.pio/build/default/firmware.bin`. The emulator builds native QEMU on first boot and stores state under `/tmp/esp-emu-xteink-$UID` by default.
 
 ## Scripted Test
 
 Use an executable `.xteink` script:
 
 ```text
-#!/usr/bin/env xteink-emu
+#!/usr/bin/env -S esp-emu --board xteink
 
 boot .pio/build/default/firmware.bin
 wait-log "Entering activity: Home" --timeout 60
@@ -56,8 +56,8 @@ chmod +x test-settings.xteink
 Each line is a normal CLI command. Blank lines and `#` comments are allowed. Scripts may also run explicitly or through stdin:
 
 ```sh
-xteink-emu --state /tmp/my-test run flow.xteink
-printf '%s\n' 'boot .pio/build/default/firmware.bin' 'wait-log "Entering activity: Home"' | xteink-emu run
+esp-emu --board xteink --state /tmp/my-test run flow.xteink
+printf '%s\n' 'boot .pio/build/default/firmware.bin' 'wait-log "Entering activity: Home"' | esp-emu --board xteink run
 ```
 
 ## Synchronization
@@ -71,9 +71,9 @@ printf '%s\n' 'boot .pio/build/default/firmware.bin' 'wait-log "Entering activit
 ## SD Cards
 
 ```sh
-xteink-emu boot .pio/build/default/firmware.bin                         # persistent state image
-xteink-emu boot .pio/build/default/firmware.bin --sdcard test-library/ # merge folder before boot
-xteink-emu boot .pio/build/default/firmware.bin --sdcard card.img      # use image directly
+esp-emu --board xteink boot .pio/build/default/firmware.bin                         # persistent state image
+esp-emu --board xteink boot .pio/build/default/firmware.bin --sdcard test-library/ # merge folder before boot
+esp-emu --board xteink boot .pio/build/default/firmware.bin --sdcard card.img      # use image directly
 ```
 
 Directory contents overwrite matching files in the persistent state image; other image contents remain and the source directory is unchanged. Add `--fresh-sd` when the test requires a clean card.
@@ -81,12 +81,12 @@ Directory contents overwrite matching files in the persistent state image; other
 ## Useful Commands
 
 ```sh
-xteink-emu press bottom-2
-xteink-emu hold power
-xteink-emu release power
-xteink-emu capture /tmp/screen.png
-xteink-emu web
-xteink-emu stop
+esp-emu --board xteink press bottom-2
+esp-emu --board xteink hold power
+esp-emu --board xteink release power
+esp-emu --board xteink capture /tmp/screen.png
+esp-emu --board xteink web
+esp-emu --board xteink stop
 ```
 
 Buttons are `left`, `right`, `bottom-1` through `bottom-4`, and `power`. Screen labels are the authoritative mapping. Serial output and assembled flash are `serial.log` and `flash.bin` inside the selected state directory.
