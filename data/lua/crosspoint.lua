@@ -19,9 +19,6 @@
 ---| "landscape_cw"
 ---| "landscape_ccw"
 
----@class app
-app = {}
-
 ---@class ble
 ble = {}
 
@@ -97,12 +94,6 @@ STYLE_BOLD = 0
 STYLE_NORMAL = 0
 ---@type integer
 STYLE_REGULAR = 0
-
--- app
-
---- Enables the on_tick() callback at a fixed interval (0 disables, minimum 33ms). Requires on_tick() to be defined.
----@param intervalMs integer 0-3600000
-function app.setTickInterval(intervalMs) end
 
 -- ble
 
@@ -449,6 +440,10 @@ function sys.exit() end
 --- Returns milliseconds since boot.
 ---@return integer
 function sys.millis() end
+
+--- Enables the on_tick() callback at a fixed interval (0 disables, minimum 33ms). Requires on_tick() to be defined.
+---@param intervalMs integer 0-3600000
+function sys.setTickInterval(intervalMs) end
 
 --- Returns milliseconds since boot.
 ---@return integer

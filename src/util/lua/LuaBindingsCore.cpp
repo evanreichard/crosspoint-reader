@@ -125,8 +125,8 @@ int sysExit(lua_State* state) {
 }
 // --- Enables the on_tick() callback at a fixed interval (0 disables, minimum 33ms). Requires on_tick() to be defined.
 // -- @param intervalMs int 0-3600000
-// -- @within app
-int appSetTickInterval(lua_State* state) {
+// -- @within sys
+int sysSetTickInterval(lua_State* state) {
   const lua_Integer requested = luaL_checkinteger(state, 1);
   luaL_argcheck(state, requested >= 0 && requested <= MAX_RUNTIME_INTERVAL_MS, 1, "interval must be 0-3600000ms");
   const uint32_t interval = requested == 0 ? 0 : std::max<uint32_t>(requested, MIN_TICK_INTERVAL_MS);
@@ -204,11 +204,8 @@ void luabindings::registerCore(lua_State* state) {
   addFunction(state, "uptime", sysMillis);
   addFunction(state, "delay", sysDelay);
   addFunction(state, "exit", sysExit);
+  addFunction(state, "setTickInterval", sysSetTickInterval);
   lua_setglobal(state, "sys");
-
-  lua_newtable(state);
-  addFunction(state, "setTickInterval", appSetTickInterval);
-  lua_setglobal(state, "app");
 
   lua_newtable(state);
   addFunction(state, "after", timerAfter);
