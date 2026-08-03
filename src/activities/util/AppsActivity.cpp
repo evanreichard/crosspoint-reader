@@ -8,7 +8,9 @@
 #include <cstring>
 
 #include "activities/ActivityManager.h"
-#include "activities/util/LuaActivity.h"
+#include <HalGPIO.h>
+
+#include "luahost/LuaHost.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
@@ -22,7 +24,7 @@ void AppsActivity::loadApps() {
   apps.clear();
   apps.reserve(8);
 
-  auto root = Storage.open("/.apps");
+  auto root = Storage.open("/.lua/apps");
   if (!root || !root.isDirectory() || !scanBuffer) return;
   root.rewindDirectory();
 
@@ -35,7 +37,7 @@ void AppsActivity::loadApps() {
 
   for (size_t i = 0; i < apps.size();) {
     HalFile script;
-    if (!Storage.openFileForRead("APPS", "/.apps/" + apps[i].name + "/main.lua", script)) {
+    if (!Storage.openFileForRead("APPS", "/.lua/apps/" + apps[i].name + "/main.lua", script)) {
       apps.erase(apps.begin() + i);
       continue;
     }
@@ -73,9 +75,9 @@ void AppsActivity::onExit() {
 
 void AppsActivity::launchSelected() {
   if (apps.empty()) return;
-  auto activity = makeUniqueNoThrow<LuaActivity>(renderer, mappedInput, apps[selectedIndex].name);
+  auto activity = makeUniqueNoThrow<cplua::LuaHost>(renderer, mappedInput, gpio, apps[selectedIndex].name);
   if (!activity) {
-    LOG_ERR("APPS", "OOM: LuaActivity");
+    LOG_ERR("APPS", "OOM: LuaHost");
     return;
   }
   // Rescan on Return - An app can install or remove other apps (the AppStore does), so the list

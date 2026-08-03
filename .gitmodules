@@ -2,3 +2,6 @@
 	path = freeink-sdk
 	url = https://github.com/Free-Ink/freeink-sdk.git
 	branch = main
+[submodule "lib/esp32-lua-api"]
+	path = lib/esp32-lua-api
+	url = git@ssh.gitea.va.reichard.io:evan/esp32-lua-api.git
