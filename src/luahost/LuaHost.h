@@ -47,6 +47,7 @@ class LuaHost final : public Activity {
   std::unique_ptr<Providers> providers;
   std::unique_ptr<esp32lua::Runtime> runtime;
   std::atomic<State> state{State::Loading};
+  std::atomic<bool> wantsExit{false};  // poll task asks the main loop to finish() the activity
   std::string loadError;
   bool buttonDown[8] = {};
 

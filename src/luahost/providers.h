@@ -161,28 +161,23 @@ class Wifi final : public esp32lua::WifiProvider {
   esp32lua::Status forget() override;
 };
 
-// CrossPoint's BLE is a HID keyboard, which the runtime contract models as a client.
-// Refuse cleanly rather than pretend: init reports what this device actually has.
+// Full BLE client stack (NimBLE): scan, connect, read/write characteristics, advertising.
+// The scan-state and client handle live in providers_ble.cpp so BLEDevice.h stays out of
+// this header.
 class Ble final : public esp32lua::BleProvider {
  public:
-  esp32lua::Status init(const std::string*) override {
-    return esp32lua::Status::failure("this device's Bluetooth is a keyboard, not a client");
-  }
-  void deinit() override {}
-  esp32lua::Status scan(int32_t, std::vector<esp32lua::BleDevice>&) override {
-    return esp32lua::Status::failure("this device's Bluetooth is a keyboard, not a client");
-  }
-  esp32lua::Status connect(const std::string&) override { return esp32lua::Status::failure("no BLE client"); }
-  void disconnect() override {}
-  bool isConnected() const override { return false; }
-  esp32lua::Status read(const std::string&, const std::string&, std::string&) override {
-    return esp32lua::Status::failure("no BLE client");
-  }
-  esp32lua::Status write(const std::string&, const std::string&, const std::string&) override {
-    return esp32lua::Status::failure("no BLE client");
-  }
-  esp32lua::Status startAdvertising(const std::string*) override { return esp32lua::Status::failure("no BLE server"); }
-  void stopAdvertising() override {}
+  ~Ble() { deinit(); }  // release the NimBLE stack when the activity tears down its providers
+  esp32lua::Status init(const std::string* name) override;
+  void deinit() override;
+  esp32lua::Status scan(int32_t durationMs, std::vector<esp32lua::BleDevice>& devices) override;
+  esp32lua::Status connect(const std::string& address) override;
+  void disconnect() override;
+  bool isConnected() const override;
+  esp32lua::Status read(const std::string& service, const std::string& characteristic, std::string& value) override;
+  esp32lua::Status write(const std::string& service, const std::string& characteristic,
+                         const std::string& value) override;
+  esp32lua::Status startAdvertising(const std::string* name) override;
+  void stopAdvertising() override;
 };
 
 class Buttons final : public esp32lua::ButtonsProvider {

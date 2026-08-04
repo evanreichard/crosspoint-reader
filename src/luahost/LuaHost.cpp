@@ -60,6 +60,7 @@ void LuaHost::pollTask(void* arg) {
 
   for (;;) {
     if (!self->runtime) break;  // activity exited under us
+    self->providers->timer.pump(*self->runtime);
     self->pollButtons();
     if (self->runtime->hasPendingNavigation()) {
       if (!self->runtime->canGoBack()) break;  // back past the app root: leave the activity
@@ -68,6 +69,8 @@ void LuaHost::pollTask(void* arg) {
     }
     vTaskDelay(pdMS_TO_TICKS(10));
   }
+  self->wantsExit = true;
+  self->requestUpdate();
   vTaskDelete(nullptr);
 }
 
@@ -84,7 +87,11 @@ void LuaHost::pollButtons() {
 void LuaHost::loop() {
   if (state == State::Error && mappedInput.wasPressed(MappedInputManager::Button::Back)) {
     finish();
+    return;
   }
+  // The poll task broke out -- back past the app's own root, or a navigation that failed to
+  // start. finish() pops us back to Apps; it must run on this thread, not the Lua task.
+  if (wantsExit) finish();
 }
 
 void LuaHost::render(RenderLock&&) {
